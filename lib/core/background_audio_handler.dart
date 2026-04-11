@@ -15,7 +15,8 @@ class ByteAudioSource extends StreamAudioSource {
   final List<int> bytes;
   final String contentType;
 
-  ByteAudioSource(this.bytes, {this.contentType = 'audio/mp4'});
+  // 🚨 Add tag here for proper MediaItem linking
+  ByteAudioSource(this.bytes, {this.contentType = 'audio/mp4', dynamic tag}) : super(tag: tag);
 
   @override
   Future<StreamAudioResponse> request([int? start, int? end]) async {
@@ -38,6 +39,111 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
   
   final List<MediaItem> _dynamicQueue = [];
   int _currentIndex = -1;
+  // 🚨 NEW: The Gapless Playlist Manager
+  // 👻🎧 The Ghost DJ (Pre-loader + Smart Shuffle)
+  Future<void> _precacheNextSong() async {
+    // 1. CHECK THE QUEUE
+    if (_currentIndex + 1 >= _dynamicQueue.length) {
+      // 🚨 NEW: SMART SHUFFLE ENGINE (10-TRACK BATCH UPGRADE)
+      if (isSmartShuffleEnabled && _dynamicQueue.isNotEmpty) {
+        print('✨ [Ghost DJ] Queue is empty! Searching for a 10-track vibe...');
+        try {
+          final currentTrack = _dynamicQueue[_currentIndex];
+          
+          final currentVideo = await _youtubeExplode.videos.get(currentTrack.id).timeout(const Duration(seconds: 5));
+          var relatedVideos = await _youtubeExplode.videos.getRelatedVideos(currentVideo).timeout(const Duration(seconds: 5));
+          
+          List<dynamic> nextVideosToQueue = [];
+
+          if (relatedVideos != null && relatedVideos.isNotEmpty) {
+            // Plan A: Find up to 10 short related videos
+            nextVideosToQueue = relatedVideos
+                .where((vid) => vid.duration != null && vid.duration!.inMinutes < 10)
+                .take(10) // 👈 THIS IS THE MAGIC NUMBER! Grabs up to 10 songs.
+                .toList();
+                
+            if (nextVideosToQueue.isEmpty) {
+               nextVideosToQueue = relatedVideos.take(10).toList(); // Fallback
+            }
+          } else {
+            // Plan B (The Fallback): Search artist name
+            print('⚠️ [Ghost DJ] YouTube hid related videos. Searching for more by ${currentTrack.artist}...');
+            final fallbackSearch = await _youtubeExplode.search.search('${currentTrack.artist} audio').timeout(const Duration(seconds: 5));
+            
+            if (fallbackSearch.isNotEmpty) {
+              nextVideosToQueue = fallbackSearch
+                  .where((vid) => vid.id.value != currentTrack.id)
+                  .take(10) // 👈 Grabs up to 10 songs here too
+                  .toList();
+            }
+          }
+
+          // 2. Loop through our batch and add them all to the UI
+          if (nextVideosToQueue.isNotEmpty) {
+            for (var nextVideo in nextVideosToQueue) {
+              final autoAddedSong = MediaItem(
+                id: nextVideo.id.value,
+                title: nextVideo.title,
+                artist: nextVideo.author,
+                duration: nextVideo.duration,
+                artUri: Uri.parse(nextVideo.thumbnails.highResUrl), 
+              );
+              _dynamicQueue.add(autoAddedSong);
+            }
+
+            // 🚨 Update the UI Queue ONCE after all 10 are added
+            queue.add(List.from(_dynamicQueue)); 
+            
+            print('✨ [Ghost DJ] Added ${nextVideosToQueue.length} new tracks to the queue!');
+            // Code continues downwards so the Ghost Downloader saves ONLY the 1st one...
+          } else {
+             print('⚠️ [Ghost DJ] Plan A and Plan B failed. Going to sleep.');
+             return;
+          }
+
+        } catch (e) {
+          print('⚠️ [Ghost DJ] DJ completely crashed or timed out: $e');
+          return;
+        }
+      } else {
+        return; // Smart Shuffle is off, and queue is empty. Ghost sleeps.
+      }
+    }
+
+    // 2. THE DOWNLOADER (Your exact same logic from before)
+    final nextItem = _dynamicQueue[_currentIndex + 1];
+    final dir = await getApplicationDocumentsDirectory();
+    final localFile = File('${dir.path}/${nextItem.id}.mp4');
+
+    if (await localFile.exists()) return; // Already downloaded!
+
+    print('👻 [Ghost Downloader] Silently downloading next song: ${nextItem.title}');
+
+    try {
+      final manifest = await _youtubeExplode.videos.streamsClient.getManifest(
+        nextItem.id,
+        ytClients: [YoutubeApiClient.safari, YoutubeApiClient.androidVr],
+      );
+      final audioStreamInfo = manifest.audioOnly.withHighestBitrate();
+      final stream = _youtubeExplode.videos.streamsClient.get(audioStreamInfo);
+      
+      final fileStream = localFile.openWrite();
+      await stream.pipe(fileStream);
+      await fileStream.flush();
+      await fileStream.close();
+
+      print('✅ [Ghost Downloader] Next song is ready for INSTANT playback!');
+    } catch (e) {
+      print('❌ [Ghost Downloader] Failed to pre-load: $e');
+    }
+  }
+  final ConcatenatingAudioSource _playlist = ConcatenatingAudioSource(
+  useLazyPreparation: true,
+  children: [],
+  );
+
+  // ✨ NEW: Smart Shuffle Toggle
+  bool isSmartShuffleEnabled = true;
 
   BackgroundAudioHandler(this._repository) {
     _init();
@@ -45,8 +151,12 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
 
   Future<void> _init() async {
     try {
+      // 🚨 NEW: Tell the Janitor to check the storage space
+      _cleanCacheIfTooBig();
+
       final session = await AudioSession.instance;
       await session.configure(const AudioSessionConfiguration.music());
+      await _player.setAudioSource(_playlist);
 
       _player.playbackEventStream.listen((PlaybackEvent event) {
         final playing = _player.playing;
@@ -132,12 +242,26 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
       final localFile = File('${dir.path}/${item.id}.mp4');
 
       if (await localFile.exists()) {
-        print('🎧 [AudioHandler] Found local file! Playing OFFLINE without data!');
+        print('🎧 [AudioHandler] Ghost file found! Playing instantly with 0 data.');
         
-        // Feed the local file directly to just_audio
-        await _player.setAudioSource(AudioSource.uri(Uri.file(localFile.path)));
+        // 🚨 1. Wrap the local file in an AudioSource with the TAG
+        // This is required so your notification bar shows the correct song title!
+        final audioSource = AudioSource.uri(
+          Uri.file(localFile.path),
+          tag: item, 
+        );
+        
+        // 🚨 2. Add it to our new Gapless Playlist engine instead of overwriting
+        await _playlist.clear();
+        await _playlist.add(audioSource);
+        
         _player.play();
-        print('▶️  [AudioHandler] Offline Playback started!');
+        print('▶️  [AudioHandler] Instant playback started!');
+        
+        // 🚨 3. The Recursion: Now that THIS song is playing, tell the Ghost 
+        // to go look for the NEXT song!
+        _precacheNextSong(); 
+        
         return; // EXIT EARLY - NO INTERNET NEEDED!
       }
 
@@ -165,18 +289,32 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
       }
 
       print('✅ [AudioHandler] Stream downloaded! (${(audioBytes.length / 1024 / 1024).toStringAsFixed(2)} MB)');
+      
+      // 🚨 NEW: THE CATCH-ALL SAVER
+      // Save these bytes to a permanent file so next time it plays offline!
+      try {
+        final cacheFile = File('${dir.path}/${item.id}.mp4');
+        await cacheFile.writeAsBytes(audioBytes);
+        print('💾 [Cache] Saved streamed song to device for future offline use!');
+      } catch (e) {
+        print('⚠️ [Cache] Failed to save stream: $e');
+      }
+      
       print('▶️  [AudioHandler] Passing raw bytes to just_audio...');
       
-      // Feed the bytes to just_audio using our custom ByteAudioSource
-      await _player.setAudioSource(
-        ByteAudioSource(
-          audioBytes,
-          contentType: audioStreamInfo.container.name == 'webm' ? 'audio/webm' : 'audio/mp4',
-        ),
-      );
+      // 🚨 NEW: Clear and add to playlist with proper tagging
+      await _playlist.clear();
+      await _playlist.add(ByteAudioSource(
+        audioBytes,
+        contentType: audioStreamInfo.container.name == 'webm' ? 'audio/webm' : 'audio/mp4',
+        tag: item, // 👈 Links the song info to the UI!
+      ));
 
       _player.play();
       print('▶️  [AudioHandler] Playback started!');
+
+      // 🚨 NEW: Tell the ghost to start preparing the next song
+      _precacheNextSong();
 
     } catch (e) {
       print('❌ [AudioHandler] Extraction or Playback failed: $e');
@@ -210,10 +348,18 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
 
   @override
   Future<void> addQueueItem(MediaItem item) async {
-    // Adds a song to the end of the queue
+    // 1. Add the song to the UI queue
     if (!_dynamicQueue.any((q) => q.id == item.id)) {
       _dynamicQueue.add(item);
       queue.add(_dynamicQueue);
+
+      // 👻 🚨 NEW: WAKE UP THE GHOST!
+      // Check if this newly added song is the VERY NEXT song in line.
+      // (_dynamicQueue.length - 2 means the song we just added is right after the current one)
+      if (_currentIndex == _dynamicQueue.length - 2) {
+        print('👻 [Ghost Downloader] Waking up! User added a new next song.');
+        _precacheNextSong();
+      }
     }
   }
 
@@ -236,6 +382,35 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
       _currentIndex = _dynamicQueue.indexWhere((q) => q.id == currentItem.id);
     }
     queue.add(_dynamicQueue);
+  }
+
+  // 🧹 The Cache Janitor
+  Future<void> _cleanCacheIfTooBig() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      
+      // Get all mp4 files in our folder
+      final files = dir.listSync()
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.mp4'))
+          .toList();
+
+      // Set a limit! 100 songs is roughly 300MB-400MB.
+      if (files.length > 100) {
+        print('🧹 [Cache Janitor] Storage limit reached. Cleaning up...');
+        
+        // Sort files by the oldest last-modified date
+        files.sort((a, b) => a.lastModifiedSync().compareTo(b.lastModifiedSync()));
+        
+        // Delete the 20 oldest songs to free up space
+        for (int i = 0; i < 20; i++) {
+          await files[i].delete();
+        }
+        print('✅ [Cache Janitor] Deleted 20 old songs. Storage optimized!');
+      }
+    } catch (e) {
+      print('⚠️ [Cache Janitor] Failed to clean cache: $e');
+    }
   }
 
   void dispose() {
