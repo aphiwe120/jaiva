@@ -115,16 +115,12 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
   // 4. CORE PLAYBACK LOGIC
   @override
   Future<void> playMediaItem(MediaItem item) async {
-    if (!_dynamicQueue.any((q) => q.id == item.id)) {
-      _dynamicQueue.add(item);
-    }
-    _currentIndex = _dynamicQueue.indexWhere((q) => q.id == item.id);
-    
-    if (_currentIndex == _dynamicQueue.length - 1) {
-      print('⚠️ [AudioHandler] Playing last song. Triggering Smart Shuffle early!');
-      _precacheNextSong();
-    }
-    
+    // 🚨 NEW V1.2 LOGIC: Wipe the old queue to start fresh with this selection
+    _dynamicQueue.clear(); 
+    _dynamicQueue.add(item);
+    _currentIndex = 0;
+
+    // Update the streams so the UI knows the queue is now just this one song
     mediaItem.add(item);
     queue.add(List.from(_dynamicQueue));
 
@@ -225,13 +221,26 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
         
         if (batch.isNotEmpty) {
           for (var vid in batch) {
-            _dynamicQueue.add(MediaItem(
-              id: vid.id.value, 
-              title: vid.title, 
-              artist: vid.author, 
-              duration: vid.duration, 
-              artUri: Uri.parse(vid.thumbnails.highResUrl)
-            ));
+            // 1. Create a "Fingerprint" (Lowercase, no spaces)
+            final String newTitle = vid.title.toLowerCase().trim();
+            
+            // 2. Check if this title already exists in the current queue
+            bool isDuplicate = _dynamicQueue.any((existingItem) {
+              return existingItem.title.toLowerCase().trim() == newTitle;
+            });
+
+            // 3. Only add if it's a fresh track
+            if (!isDuplicate) {
+              _dynamicQueue.add(MediaItem(
+                id: vid.id.value, 
+                title: vid.title, 
+                artist: vid.author, 
+                duration: vid.duration, 
+                artUri: Uri.parse(vid.thumbnails.highResUrl)
+              ));
+            } else {
+              print('🚫 [Ghost DJ] Blocking duplicate: $newTitle');
+            }
           }
           queue.add(List.from(_dynamicQueue));
           print('✨ [Ghost DJ] SUCCESS! Added ${batch.length} tracks to the queue.');
@@ -331,6 +340,55 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
       queue.add(List.from(_dynamicQueue));
       if (_currentIndex == _dynamicQueue.length - 2) _precacheNextSong();
     }
+  }
+
+  @override
+  Future<void> moveQueueItem(int oldIndex, int newIndex) async {
+    // 🚨 Standard Flutter Reorderable math fix
+    if (oldIndex < newIndex) newIndex -= 1;
+    
+    // 1. Move it in our local List
+    final item = _dynamicQueue.removeAt(oldIndex);
+    _dynamicQueue.insert(newIndex, item);
+    
+    // 2. Notify the UI
+    queue.add(List.from(_dynamicQueue));
+    
+    // 3. Update the Current Index if the playing song was moved
+    // (This keeps the music from stopping when you drag the active song)
+    if (_currentIndex == oldIndex) {
+      _currentIndex = newIndex;
+    } else if (oldIndex < _currentIndex && newIndex >= _currentIndex) {
+      _currentIndex -= 1;
+    } else if (oldIndex > _currentIndex && newIndex <= _currentIndex) {
+      _currentIndex += 1;
+    }
+  }
+
+  @override
+  Future<void> removeQueueItem(MediaItem item) async {
+    _dynamicQueue.removeWhere((q) => q.id == item.id);
+    queue.add(List.from(_dynamicQueue));
+  }
+
+  Future<void> clearQueue() async {
+    if (_dynamicQueue.isEmpty) return;
+
+    // Keep the currently playing song, remove everything else
+    final MediaItem? currentItem = mediaItem.value;
+    
+    _dynamicQueue.clear();
+    
+    if (currentItem != null) {
+      _dynamicQueue.add(currentItem);
+      _currentIndex = 0;
+    } else {
+      _currentIndex = -1;
+    }
+
+    // Update the UI stream
+    queue.add(List.from(_dynamicQueue));
+    print('🧹 [AudioHandler] Queue cleared (Current song preserved)');
   }
 
   // 🚨 NEW: EQ Controllers for the UI
