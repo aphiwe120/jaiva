@@ -10,6 +10,7 @@ import 'package:jaiva/ui/widgets/mini_player.dart';
 import 'package:jaiva/ui/widgets/jaiva_bottom_nav.dart';
 import 'package:jaiva/ui/screens/history_screen.dart';
 import 'package:jaiva/ui/screens/settings_screen.dart';
+import 'package:jaiva/ui/screens/vault_screen.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -32,40 +33,45 @@ class HomeScreen extends ConsumerWidget {
             child: SafeArea(
               child: CustomScrollView(
                 slivers: [
-                  // --- HEADER ---
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 24, 16, 24),
                       child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            _getGreeting(),
-                            style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+                          // 🚨 THE FIX: Wrap title in Expanded so it yields space to the buttons!
+                          Expanded(
+                            child: Text(
+                              _getGreeting(),
+                              style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
-                          Row(
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.notifications_none, color: Colors.white), 
-                                onPressed: () {
-                                  // We can leave this one dead for now, or add a snackbar!
-                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No new notifications')));
-                                }
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.history, color: Colors.white), 
-                                onPressed: () {
-                                  Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryScreen()));
-                                }
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.settings_outlined, color: Colors.white), 
-                                onPressed: () {
-                                  Navigator.push(context, MaterialPageRoute(builder: (context) => const SettingsScreen()));
-                                }
-                              ),
-                            ],
-                          )
+                          IconButton(
+                            icon: const Icon(Icons.history, color: Colors.white),
+                            onPressed: () {
+                              Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryScreen()));
+                            }
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.folder_special_rounded, color: Colors.white),
+                            tooltip: 'Offline Vault',
+                            onPressed: () {
+                              final audioHandler = ref.read(audioHandlerProvider);
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => VaultScreen(audioHandler: audioHandler),
+                                ),
+                              );
+                            }
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.settings_outlined, color: Colors.white),
+                            onPressed: () {
+                              Navigator.push(context, MaterialPageRoute(builder: (context) => const SettingsScreen()));
+                            }
+                          ),
                         ],
                       ),
                     ),

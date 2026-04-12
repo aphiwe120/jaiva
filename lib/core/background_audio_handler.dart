@@ -272,6 +272,16 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
         await tempFile.rename(finalFile.path);
         print('✅ [Ghost Downloader] Success. File safely locked and ready.');
         
+        // 🚨 NEW: THE LIBRARIAN
+        // Save the metadata so the Vault UI knows what this file is!
+        final vaultBox = Hive.box<Song>('vault');
+        await vaultBox.put(nextItem.id, Song(
+          id: nextItem.id,
+          title: nextItem.title,
+          artist: nextItem.artist ?? 'Unknown Artist',
+          thumbnailUrl: nextItem.artUri?.toString() ?? '',
+        ));
+        
       } catch (e) {
         print('❌ [Ghost Downloader] Error. Skipping cache for this track.');
         if (await tempFile.exists()) await tempFile.delete(); 

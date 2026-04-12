@@ -26,6 +26,7 @@ Future<void> main() async {
   await Hive.openBox<Song>('history');
   await Hive.openBox<Playlist>('playlists');
   await Hive.openBox<Song>('downloads');
+  await Hive.openBox<Song>('vault');
 
   // 2. 🚨 INITIALIZE SUPABASE
   await Supabase.initialize(
