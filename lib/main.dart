@@ -4,6 +4,7 @@ import 'package:hive_flutter/hive_flutter.dart';         // REQUIRED FOR MOBILE 
 import 'package:audio_service/audio_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:jaiva/ui/screens/lock_screen.dart'; // We will build this next!
 import 'package:jaiva/models/song.dart';
 import 'package:jaiva/models/playlist.dart';
@@ -43,7 +44,7 @@ Future<void> main() async {
         androidNotificationChannelName: 'Audio playback',
         androidNotificationOngoing: true,
       ),
-    );
+    ) as BackgroundAudioHandler;
   } catch (e) {
     debugPrint('❌ Error initializing AudioService: $e');
   }

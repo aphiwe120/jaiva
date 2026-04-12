@@ -103,19 +103,23 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                               },
                               child: Container(
                                 decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(24),
                                   boxShadow: [
-                                    BoxShadow(color: Colors.black.withOpacity(0.4), blurRadius: 30, offset: const Offset(0, 15))
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.3),
+                                      blurRadius: 20,
+                                      offset: const Offset(0, 10),
+                                    ), // Adds a premium drop shadow
                                   ],
                                 ),
                                 child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(24),
+                                  borderRadius: BorderRadius.circular(20), // Premium rounded corners
                                   child: CachedNetworkImage(
                                     imageUrl: imageUrl,
                                     cacheManager: CacheConfig.imageCache,
                                     memCacheWidth: 600,
-                                    fit: BoxFit.cover,
-                                    errorWidget: (_, __, ___) => Container(color: Colors.grey.shade800, child: const Icon(Icons.music_note, size: 80, color: Colors.white)),
+                                    fit: BoxFit.cover, // 👈 THE MAGIC WORD: Crops it perfectly into a square instead of squishing!
+                                    errorWidget: (context, error, stackTrace) => 
+                                      Container(color: Colors.grey.shade800, child: const Icon(Icons.music_note, size: 100, color: Colors.white)),
                                   ),
                                 ),
                               ),

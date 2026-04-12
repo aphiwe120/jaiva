@@ -51,6 +51,8 @@ dependencies:
   supabase_flutter: ^2.5.0
   device_info_plus: ^10.1.0
   shared_preferences: ^2.2.3
+  window_manager: ^0.5.1
+  just_audio_windows: ^0.2.3
   
 
 dev_dependencies:
