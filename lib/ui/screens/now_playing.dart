@@ -14,6 +14,7 @@ import 'package:jaiva/core/download_service.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:jaiva/ui/widgets/playback_progress_bar.dart';
 import 'package:jaiva/ui/widgets/synchronized_lyrics.dart';
+import 'package:jaiva/ui/widgets/eq_mixer.dart';
 
 class NowPlayingScreen extends ConsumerStatefulWidget {
   const NowPlayingScreen({super.key});
@@ -220,6 +221,17 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                                 heightFactor: 0.9,
                                 child: QueueScreen(),
                               ),
+                            );
+                          },
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.tune_rounded, color: Colors.white, size: 30),
+                          onPressed: () {
+                            showModalBottomSheet(
+                              context: context,
+                              backgroundColor: Colors.transparent,
+                              isScrollControlled: true,
+                              builder: (context) => EQMixer(equalizer: audioHandler.equalizer),
                             );
                           },
                         ),

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io'; // Ensures the cache manager can read files
 import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
@@ -30,15 +31,25 @@ class ByteAudioSource extends StreamAudioSource {
 
 class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
   // 1. CLASS VARIABLES
-  final AudioPlayer _player = AudioPlayer();
+  
+  // 🚨 NEW: Hardware EQ initialized FIRST
+  final AndroidEqualizer _equalizer = AndroidEqualizer(); 
+  
+  // 🚨 NEW: Player initialized SECOND, with the EQ plugged into its pipeline
+  late final AudioPlayer _player = AudioPlayer(
+    audioPipeline: AudioPipeline(
+      androidAudioEffects: [_equalizer],
+    ),
+  );
+  
   final MusicRepository _repository;
   final YoutubeExplode _youtubeExplode = YoutubeExplode();
   final List<MediaItem> _dynamicQueue = [];
   int _currentIndex = -1;
   bool _isDownloading = false;
-  bool _isSearching = false; // 🚨 NEW: Protect Smart Shuffle search phase
+  bool _isSearching = false; 
   bool isSmartShuffleEnabled = true;
-  DateTime _lastAutoSkip = DateTime.fromMillisecondsSinceEpoch(0); // 🚨 NEW: Prevent auto-skip spam
+  DateTime _lastAutoSkip = DateTime.fromMillisecondsSinceEpoch(0); 
 
   final ConcatenatingAudioSource _playlist = ConcatenatingAudioSource(
     useLazyPreparation: true,
@@ -54,8 +65,13 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
   Future<void> _init() async {
     try {
       _cleanCacheIfTooBig();
-      final session = await AudioSession.instance;
-      await session.configure(const AudioSessionConfiguration.music());
+      
+      // Keep mobile background sessions active
+      if (Platform.isAndroid || Platform.isIOS) {
+        final session = await AudioSession.instance;
+        await session.configure(const AudioSessionConfiguration.music());
+      }
+      
       await _player.setAudioSource(_playlist);
 
       _player.playbackEventStream.listen((PlaybackEvent event) {
@@ -73,11 +89,10 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
         ));
         
         if (_player.processingState == ProcessingState.completed) {
-          // 🚨 NEW: 20-SECOND LOOP BREAKER
           final now = DateTime.now();
-          if (now.difference(_lastAutoSkip).inSeconds < 20) { // 👈 CHANGED TO 20
+          if (now.difference(_lastAutoSkip).inSeconds < 20) { 
             print('🛑 [LOOP BREAKER] Hardware crash detected. Halting auto-skip to save data!');
-            _player.pause(); // Force the player to stop
+            _player.pause(); 
             return;
           }
           
@@ -105,7 +120,6 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
     }
     _currentIndex = _dynamicQueue.indexWhere((q) => q.id == item.id);
     
-    // Trigger DJ if we are playing the very last song in the queue
     if (_currentIndex == _dynamicQueue.length - 1) {
       print('⚠️ [AudioHandler] Playing last song. Triggering Smart Shuffle early!');
       _precacheNextSong();
@@ -114,7 +128,6 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
     mediaItem.add(item);
     queue.add(List.from(_dynamicQueue));
 
-    // Save History to Hive
     try {
       final historyBox = Hive.box<Song>('history');
       final playedSong = Song(id: item.id, title: item.title, artist: item.artist ?? 'Unknown Artist', thumbnailUrl: item.artUri?.toString() ?? '');
@@ -128,7 +141,6 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
       final dir = await getApplicationDocumentsDirectory();
       final localFile = File('${dir.path}/${item.id}.mp4');
 
-      // Play Cached File
       if (await localFile.exists() && await localFile.length() > 50000) {
         print('🎧 [AudioHandler] Playing cached file.');
         final audioSource = AudioSource.uri(Uri.file(localFile.path), tag: item);
@@ -139,7 +151,6 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
         return;
       }
 
-      // Stream from YouTube
       print('🔄 [AudioHandler] Streaming...');
       final manifest = await _youtubeExplode.videos.streamsClient.getManifest(item.id, ytClients: [YoutubeApiClient.safari, YoutubeApiClient.androidVr]);
       final audioStreamInfo = manifest.audioOnly.withHighestBitrate();
@@ -148,7 +159,6 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
       List<int> audioBytes = [];
       await for (final chunk in stream) { audioBytes.addAll(chunk); }
 
-      // Save to Cache
       final cacheFile = File('${dir.path}/${item.id}.mp4');
       await cacheFile.writeAsBytes(audioBytes);
 
@@ -166,7 +176,6 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
   Future<void> _precacheNextSong() async {
     print('🔎 [Diagnostic] Ghost DJ check: Index=$_currentIndex, QueueSize=${_dynamicQueue.length}');
 
-    // 🚨 NEW: Lock the search phase to prevent race conditions!
     if (isSmartShuffleEnabled && _dynamicQueue.length <= _currentIndex + 2) {
       if (_isSearching) {
         print('⏳ [Ghost DJ] Already searching. Ignoring duplicate trigger.');
@@ -180,28 +189,20 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
         final seedTrack = _dynamicQueue.isNotEmpty ? _dynamicQueue.last : null;
         if (seedTrack == null) return;
 
-        // 🚨 ADDED TIMEOUTS BACK: Prevent the app from freezing if YouTube ignores us!
         final video = await _youtubeExplode.videos.get(seedTrack.id).timeout(const Duration(seconds: 5));
         
         List<dynamic> batch = [];
 
         try {
-          // PLAN A: Related Videos
           var related = await _youtubeExplode.videos.getRelatedVideos(video).timeout(const Duration(seconds: 5));
           if (related != null && related.isNotEmpty) {
-            // 🚨 THE MORNING FIX: STRICTLY AUDIO BOUNCER
             batch = related.where((vid) {
               final title = vid.title.toLowerCase();
-              
-              // 1. Must be normal song length
               final isRightLength = vid.duration != null && vid.duration!.inMinutes < 10;
-              
-              // 2. Ban all videos with skits or visualizers
               final isCleanAudio = !title.contains('music video') && 
                                    !title.contains('official video') && 
                                    !title.contains('visualizer') &&
                                    !title.contains('live');
-                                   
               return isRightLength && isCleanAudio;
             }).take(10).toList();
           }
@@ -209,27 +210,19 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
           print('⚠️ [Ghost DJ] YouTube blocked Plan A. Switching to Plan B...');
         }
 
-        // 🚨 PLAN B: If Plan A failed or returned nothing, search the artist instead!
         if (batch.isEmpty) {
           final fallbackSearch = await _youtubeExplode.search.search('${seedTrack.artist} audio').timeout(const Duration(seconds: 5));
-          // 🚨 APPLY THE SAME FILTER TO FALLBACK SEARCH!
           batch = fallbackSearch.where((vid) {
             final title = vid.title.toLowerCase();
-            
-            // 1. Must be normal song length
             final isRightLength = vid.duration != null && vid.duration!.inMinutes < 10;
-            
-            // 2. Ban all videos with skits or visualizers
             final isCleanAudio = !title.contains('music video') && 
                                  !title.contains('official video') && 
                                  !title.contains('visualizer') &&
                                  !title.contains('live');
-                                 
             return isRightLength && isCleanAudio && vid.id.value != seedTrack.id;
           }).take(10).toList();
         }
         
-        // 🚨 UPDATE UI
         if (batch.isNotEmpty) {
           for (var vid in batch) {
             _dynamicQueue.add(MediaItem(
@@ -248,18 +241,17 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
       } catch (e) {
         print('⚠️ [Ghost DJ] Complete System Failure: $e');
       } finally {
-        _isSearching = false; // Always unlock
+        _isSearching = false; 
       }
     }
 
-    // DOWNLOAD PHASE (Lock protected)
     if (_isDownloading) return;
     if (_currentIndex + 1 < _dynamicQueue.length) {
       final nextItem = _dynamicQueue[_currentIndex + 1];
       final dir = await getApplicationDocumentsDirectory();
       
       final finalFile = File('${dir.path}/${nextItem.id}.mp4');
-      final tempFile = File('${dir.path}/${nextItem.id}.temp'); // 🚨 NEW: The safe zone
+      final tempFile = File('${dir.path}/${nextItem.id}.temp'); 
 
       if (await finalFile.exists() && await finalFile.length() > 50000) return;
 
@@ -272,19 +264,17 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
         );
         final stream = _youtubeExplode.videos.streamsClient.get(manifest.audioOnly.withHighestBitrate());
         
-        // 🚨 WRITE TO TEMP FILE FIRST
         final fileStream = tempFile.openWrite();
         await stream.pipe(fileStream);
         await fileStream.flush();
         await fileStream.close();
         
-        // 🚨 RENAME ONLY WHEN 100% FINISHED
         await tempFile.rename(finalFile.path);
         print('✅ [Ghost Downloader] Success. File safely locked and ready.');
         
       } catch (e) {
         print('❌ [Ghost Downloader] Error. Skipping cache for this track.');
-        if (await tempFile.exists()) await tempFile.delete(); // Clean up temp file
+        if (await tempFile.exists()) await tempFile.delete(); 
       } finally {
         _isDownloading = false; 
       }
@@ -331,6 +321,13 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
       queue.add(List.from(_dynamicQueue));
       if (_currentIndex == _dynamicQueue.length - 2) _precacheNextSong();
     }
+  }
+
+  // 🚨 NEW: EQ Controllers for the UI
+  AndroidEqualizer get equalizer => _equalizer;
+
+  Future<void> toggleEQ(bool enable) async {
+    await _equalizer.setEnabled(enable);
   }
 
   void dispose() {
