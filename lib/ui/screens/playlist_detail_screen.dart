@@ -73,13 +73,16 @@ class PlaylistDetailScreen extends ConsumerWidget {
                         },
                       ),
                       onTap: () {
-                        // Play the song!
-                        ref.read(audioHandlerProvider).playMediaItem(MediaItem(
+                        // 🚨 NEW: Pass the entire playlist and start at the tapped song
+                        final audioHandler = ref.read(audioHandlerProvider);
+                        final mediaItems = songs.map((song) => MediaItem(
                           id: song.id,
                           title: song.title,
                           artist: song.artist,
                           artUri: Uri.parse(song.thumbnailUrl),
-                        ));
+                        )).toList();
+                        
+                        audioHandler.playPlaylist(mediaItems, startIndex: index);
                       },
                     );
                   },

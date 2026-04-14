@@ -1,5 +1,6 @@
 import 'dart:async';
-import 'dart:io'; // Ensures the cache manager can read files
+import 'dart:io'; 
+import 'dart:convert';
 import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
@@ -8,6 +9,9 @@ import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:hive/hive.dart';
 import 'package:jaiva/models/song.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:http/http.dart' as http;
+// 👇 NEW: Import Supabase to get the user ID!
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class ByteAudioSource extends StreamAudioSource {
   final List<int> bytes;
@@ -31,11 +35,7 @@ class ByteAudioSource extends StreamAudioSource {
 
 class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
   // 1. CLASS VARIABLES
-  
-  // 🚨 NEW: Hardware EQ initialized FIRST
   final AndroidEqualizer _equalizer = AndroidEqualizer(); 
-  
-  // 🚨 NEW: Player initialized SECOND, with the EQ plugged into its pipeline
   late final AudioPlayer _player = AudioPlayer(
     audioPipeline: AudioPipeline(
       androidAudioEffects: [_equalizer],
@@ -45,6 +45,8 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
   final MusicRepository _repository;
   final YoutubeExplode _youtubeExplode = YoutubeExplode();
   final List<MediaItem> _dynamicQueue = [];
+  final Set<String> _processedCache = {}; // Prevents duplicate uploads in one session
+  
   int _currentIndex = -1;
   bool _isDownloading = false;
   bool _isSearching = false; 
@@ -74,7 +76,7 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
       
       await _player.setAudioSource(_playlist);
 
-      _player.playbackEventStream.listen((PlaybackEvent event) {
+      _player.playbackEventStream.listen((PlaybackEvent event) async {
         final playing = _player.playing;
         playbackState.add(playbackState.value.copyWith(
           controls: [
@@ -90,14 +92,17 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
         
         if (_player.processingState == ProcessingState.completed) {
           final now = DateTime.now();
-          if (now.difference(_lastAutoSkip).inSeconds < 20) { 
-            print('🛑 [LOOP BREAKER] Hardware crash detected. Halting auto-skip to save data!');
-            _player.pause(); 
+          
+          // 👇 FIX: Only trigger the Loop Breaker if the song "finished" in less than 2 seconds.
+          // Most lag spikes last 3-4 seconds, so 2 seconds is the "danger zone."
+          if (now.difference(_lastAutoSkip).inSeconds < 2) { 
+            print('🛑 [LOOP BREAKER] Real hardware loop detected. Stopping.');
+            Future.microtask(() => _player.stop()); 
             return;
           }
           
           _lastAutoSkip = now;
-          skipToNext();
+          skipToNext(); 
         }
       });
 
@@ -115,12 +120,10 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
   // 4. CORE PLAYBACK LOGIC
   @override
   Future<void> playMediaItem(MediaItem item) async {
-    // 🚨 NEW V1.2 LOGIC: Wipe the old queue to start fresh with this selection
     _dynamicQueue.clear(); 
     _dynamicQueue.add(item);
     _currentIndex = 0;
 
-    // Update the streams so the UI knows the queue is now just this one song
     mediaItem.add(item);
     queue.add(List.from(_dynamicQueue));
 
@@ -133,6 +136,10 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
       if (historyBox.length > 50) await historyBox.deleteAt(0);
     } catch (e) { print('⚠️ Hive Error: $e'); }
 
+    _handlePlayback(item);
+  }
+
+  Future<void> _handlePlayback(MediaItem item) async {
     try {
       final dir = await getApplicationDocumentsDirectory();
       final localFile = File('${dir.path}/${item.id}.mp4');
@@ -143,7 +150,15 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
         await _playlist.clear();
         await _playlist.add(audioSource);
         _player.play();
-        _precacheNextSong(); 
+        
+        // 👇 NEW: Tell the Ghost DJ to calculate and queue the next song NOW!
+        if (isSmartShuffleEnabled) {
+          _queueNextGhostTrack(item.title).then((_) {
+            _precacheNextSong(); // Once the AI decides, start downloading it in the background!
+          });
+        } else {
+          _precacheNextSong(); 
+        }
         return;
       }
 
@@ -158,79 +173,98 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
       final cacheFile = File('${dir.path}/${item.id}.mp4');
       await cacheFile.writeAsBytes(audioBytes);
 
+      // 👇 NEW: Send the CURRENT song to the Cloud Librarian
+      if (!_processedCache.contains(item.id)) {
+        uploadToLibrarian(cacheFile.path, item.title);
+        _processedCache.add(item.id);
+      }
+
+      // 👇 NEW: Save the CURRENT song to the local Vault UI
+      final vaultBox = Hive.box<Song>('vault');
+      await vaultBox.put(item.id, Song(
+        id: item.id,
+        title: item.title,
+        artist: item.artist ?? 'Unknown Artist',
+        thumbnailUrl: item.artUri?.toString() ?? '',
+      ));
+
       await _playlist.clear();
       await _playlist.add(ByteAudioSource(audioBytes, contentType: audioStreamInfo.container.name == 'webm' ? 'audio/webm' : 'audio/mp4', tag: item));
       _player.play();
-      _precacheNextSong();
+      
+      // Tell the Ghost DJ to calculate and queue the next song NOW!
+      if (isSmartShuffleEnabled) {
+        _queueNextGhostTrack(item.title).then((_) {
+          _precacheNextSong(); 
+        });
+      } else {
+        _precacheNextSong(); 
+      }
+      
     } catch (e) {
       print('❌ Playback failed: $e');
       Future.delayed(const Duration(seconds: 2), () => skipToNext());
     }
   }
 
-  // 5. GHOST DJ & SMART SHUFFLE
-  Future<void> _precacheNextSong() async {
-    print('🔎 [Diagnostic] Ghost DJ check: Index=$_currentIndex, QueueSize=${_dynamicQueue.length}');
 
-    if (isSmartShuffleEnabled && _dynamicQueue.length <= _currentIndex + 2) {
-      if (_isSearching) {
-        print('⏳ [Ghost DJ] Already searching. Ignoring duplicate trigger.');
-        return;
+  // 5. GHOST DJ & SMART SHUFFLE
+
+  // 🧠 THE PROACTIVE GHOST DJ
+  Future<void> _queueNextGhostTrack(String currentTitle) async {
+    if (_isSearching) return;
+    _isSearching = true;
+
+    try {
+      String? nextTitle = await getGhostRecommendation(currentTitle);
+      
+      if (nextTitle == null) {
+        // 👇 Change 15 to 40. Give the Librarian enough time to finish the upload!
+        print('⏳ [Ghost DJ] Vault empty. Waiting 25s for DNA extraction...');
+        await Future.delayed(const Duration(seconds: 40)); 
+        nextTitle = await getGhostRecommendation(currentTitle);
       }
+
+      if (nextTitle != null) {
+        final searchResults = await _youtubeExplode.search.search(nextTitle);
+        if (searchResults.isNotEmpty) {
+          final vid = searchResults.first;
+          if (!_dynamicQueue.any((q) => q.title == nextTitle)) {
+            _dynamicQueue.add(MediaItem(
+              id: vid.id.value, 
+              title: vid.title, 
+              artist: vid.author, 
+              duration: vid.duration, 
+              artUri: Uri.parse(vid.thumbnails.highResUrl)
+            ));
+            queue.add(List.from(_dynamicQueue));
+            print('🎧 [Ghost DJ] SUCCESS: Injected AI pick: $nextTitle');
+          }
+        }
+      }
+    } catch (e) {
+      print('⚠️ [Ghost DJ] Error: $e');
+    } finally {
+      _isSearching = false;
+    }
+  }
+
+  Future<void> _precacheNextSong() async {
+    if (isSmartShuffleEnabled && _dynamicQueue.length <= _currentIndex + 2) {
+      if (_isSearching) return;
       _isSearching = true;
       
       try {
-        print('✨ [Ghost DJ] Queue is running low. Fetching a new batch...');
-        
         final seedTrack = _dynamicQueue.isNotEmpty ? _dynamicQueue.last : null;
         if (seedTrack == null) return;
 
         final video = await _youtubeExplode.videos.get(seedTrack.id).timeout(const Duration(seconds: 5));
+        var related = await _youtubeExplode.videos.getRelatedVideos(video).timeout(const Duration(seconds: 5));
         
-        List<dynamic> batch = [];
-
-        try {
-          var related = await _youtubeExplode.videos.getRelatedVideos(video).timeout(const Duration(seconds: 5));
-          if (related != null && related.isNotEmpty) {
-            batch = related.where((vid) {
-              final title = vid.title.toLowerCase();
-              final isRightLength = vid.duration != null && vid.duration!.inMinutes < 10;
-              final isCleanAudio = !title.contains('music video') && 
-                                   !title.contains('official video') && 
-                                   !title.contains('visualizer') &&
-                                   !title.contains('live');
-              return isRightLength && isCleanAudio;
-            }).take(10).toList();
-          }
-        } catch (e) {
-          print('⚠️ [Ghost DJ] YouTube blocked Plan A. Switching to Plan B...');
-        }
-
-        if (batch.isEmpty) {
-          final fallbackSearch = await _youtubeExplode.search.search('${seedTrack.artist} audio').timeout(const Duration(seconds: 5));
-          batch = fallbackSearch.where((vid) {
-            final title = vid.title.toLowerCase();
-            final isRightLength = vid.duration != null && vid.duration!.inMinutes < 10;
-            final isCleanAudio = !title.contains('music video') && 
-                                 !title.contains('official video') && 
-                                 !title.contains('visualizer') &&
-                                 !title.contains('live');
-            return isRightLength && isCleanAudio && vid.id.value != seedTrack.id;
-          }).take(10).toList();
-        }
-        
-        if (batch.isNotEmpty) {
-          for (var vid in batch) {
-            // 1. Create a "Fingerprint" (Lowercase, no spaces)
-            final String newTitle = vid.title.toLowerCase().trim();
-            
-            // 2. Check if this title already exists in the current queue
-            bool isDuplicate = _dynamicQueue.any((existingItem) {
-              return existingItem.title.toLowerCase().trim() == newTitle;
-            });
-
-            // 3. Only add if it's a fresh track
-            if (!isDuplicate) {
+        // 👇 The Safe Null Check for YouTube Explode
+        if (related != null && related.isNotEmpty) {
+          for (var vid in related.take(10)) {
+            if (!_dynamicQueue.any((q) => q.id == vid.id.value)) {
               _dynamicQueue.add(MediaItem(
                 id: vid.id.value, 
                 title: vid.title, 
@@ -238,17 +272,12 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
                 duration: vid.duration, 
                 artUri: Uri.parse(vid.thumbnails.highResUrl)
               ));
-            } else {
-              print('🚫 [Ghost DJ] Blocking duplicate: $newTitle');
             }
           }
           queue.add(List.from(_dynamicQueue));
-          print('✨ [Ghost DJ] SUCCESS! Added ${batch.length} tracks to the queue.');
-        } else {
-          print('❌ [Ghost DJ] Both Plan A and B failed. DJ is taking a break.');
         }
       } catch (e) {
-        print('⚠️ [Ghost DJ] Complete System Failure: $e');
+        print('⚠️ [Ghost DJ] Precaching batch failed: $e');
       } finally {
         _isSearching = false; 
       }
@@ -258,31 +287,32 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
     if (_currentIndex + 1 < _dynamicQueue.length) {
       final nextItem = _dynamicQueue[_currentIndex + 1];
       final dir = await getApplicationDocumentsDirectory();
-      
       final finalFile = File('${dir.path}/${nextItem.id}.mp4');
-      final tempFile = File('${dir.path}/${nextItem.id}.temp'); 
 
-      if (await finalFile.exists() && await finalFile.length() > 50000) return;
+      if (await finalFile.exists() && await finalFile.length() > 50000) {
+         // Even if it exists, let's make sure it's analyzed in the cloud!
+         if (!_processedCache.contains(nextItem.id)) {
+           uploadToLibrarian(finalFile.path, nextItem.title);
+           _processedCache.add(nextItem.id);
+         }
+         return;
+      }
 
       _isDownloading = true; 
       try {
-        print('👻 [Ghost Downloader] Fetching: ${nextItem.title}');
-        final manifest = await _youtubeExplode.videos.streamsClient.getManifest(
-          nextItem.id, 
-          ytClients: [YoutubeApiClient.safari, YoutubeApiClient.androidVr]
-        );
+        final manifest = await _youtubeExplode.videos.streamsClient.getManifest(nextItem.id, ytClients: [YoutubeApiClient.safari, YoutubeApiClient.androidVr]);
         final stream = _youtubeExplode.videos.streamsClient.get(manifest.audioOnly.withHighestBitrate());
         
-        final fileStream = tempFile.openWrite();
-        await stream.pipe(fileStream);
-        await fileStream.flush();
-        await fileStream.close();
+        List<int> audioBytes = [];
+        await for (final chunk in stream) { audioBytes.addAll(chunk); }
+        await finalFile.writeAsBytes(audioBytes);
         
-        await tempFile.rename(finalFile.path);
-        print('✅ [Ghost Downloader] Success. File safely locked and ready.');
-        
-        // 🚨 NEW: THE LIBRARIAN
-        // Save the metadata so the Vault UI knows what this file is!
+        // 🚀 CLOUD LIBRARIAN TRIGGER
+        if (!_processedCache.contains(nextItem.id)) {
+           uploadToLibrarian(finalFile.path, nextItem.title);
+           _processedCache.add(nextItem.id);
+        }
+
         final vaultBox = Hive.box<Song>('vault');
         await vaultBox.put(nextItem.id, Song(
           id: nextItem.id,
@@ -290,38 +320,87 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
           artist: nextItem.artist ?? 'Unknown Artist',
           thumbnailUrl: nextItem.artUri?.toString() ?? '',
         ));
-        
       } catch (e) {
-        print('❌ [Ghost Downloader] Error. Skipping cache for this track.');
-        if (await tempFile.exists()) await tempFile.delete(); 
+        print('❌ [Ghost Downloader] Error: $e');
       } finally {
         _isDownloading = false; 
       }
     }
   }
 
-  // 6. HELPER METHODS
-  Future<void> _cleanCacheIfTooBig() async {
+  // 6. CLOUD LIBRARIAN (Hugging Face)
+  Future<void> uploadToLibrarian(String filePath, String songTitle) async {
+    // 👇 NEW: Get the user ID from Supabase
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) {
+      print('⚠️ [Librarian] No user logged in. Skipping DNA upload.');
+      return;
+    }
+
+    final url = Uri.parse('https://aphiwe-mntambo-jaiva-librarian.hf.space/api/extract');
+    
     try {
-      final dir = await getApplicationDocumentsDirectory();
-      final files = dir.listSync().whereType<File>().where((f) => f.path.endsWith('.mp4')).toList();
-      if (files.length > 100) {
-        files.sort((a, b) => a.lastModifiedSync().compareTo(b.lastModifiedSync()));
-        for (int i = 0; i < 20; i++) { await files[i].delete(); }
+      var request = http.MultipartRequest('POST', url);
+      request.fields['user_id'] = userId; // 👈 Tagging the owner!
+      request.fields['song_title'] = songTitle;
+      request.files.add(await http.MultipartFile.fromPath('file', filePath));
+      
+      print('🚀 [Librarian] Analyzing DNA for: $songTitle (User: $userId)');
+      var streamedResponse = await request.send().timeout(const Duration(seconds: 120));
+      var response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200) {
+        print('✅ [Librarian] DNA secured in Cloud Vault.');
+      } else {
+        print('⚠️ [Librarian] Failed to secure DNA: ${response.statusCode}');
       }
-    } catch (e) { print('Janitor Error: $e'); }
+    } catch (e) {
+      print('🔌 [Librarian] Offline/Error: $e');
+    }
   }
 
-  @override Future<void> play() => _player.play();
-  @override Future<void> pause() => _player.pause();
-  @override Future<void> seek(Duration position) => _player.seek(position);
-  @override Future<void> stop() => _player.stop();
+  // 6.5 GHOST RECOMMENDATION (Render API)
+  Future<String?> getGhostRecommendation(String currentTitle) async {
+    // 👇 NEW: Get the user ID from Supabase
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return null;
 
+    // 👈 NEW: Added user_id parameter to the URL
+    final url = Uri.parse('https://jaiva-api.onrender.com/api/recommend?current_song=${Uri.encodeComponent(currentTitle)}&user_id=$userId');
+
+    try {
+      print('🤖 [Ghost DJ] Calculating next vibe for: $currentTitle');
+      final response = await http.get(url).timeout(const Duration(seconds: 15));
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['next_up'] as String?;
+      } else if (response.statusCode == 404) {
+        print('🤖 [Ghost DJ] User vault is empty or song not found.');
+      }
+    } catch (e) {
+      print('🤖 [Ghost DJ] AI Error: $e');
+    }
+    return null;
+  }
+
+  // 7. QUEUE CONTROL
   @override
   Future<void> skipToNext() async {
     if (_currentIndex + 1 < _dynamicQueue.length) {
-      await playMediaItem(_dynamicQueue[_currentIndex + 1]);
+      _currentIndex++;
+      final nextItem = _dynamicQueue[_currentIndex];
+      mediaItem.add(nextItem);
+      _handlePlayback(nextItem);
     }
+  }
+
+  Future<void> skipToQueueItem(int index) async {
+    if (index < 0 || index >= _dynamicQueue.length) return;
+    _currentIndex = index;
+    final targetItem = _dynamicQueue[_currentIndex];
+    mediaItem.add(targetItem);
+    _handlePlayback(targetItem);
   }
 
   @override
@@ -329,7 +408,7 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
     if (_player.position.inSeconds > 3) {
       seek(Duration.zero);
     } else if (_currentIndex > 0) {
-      await playMediaItem(_dynamicQueue[_currentIndex - 1]);
+      skipToQueueItem(_currentIndex - 1);
     }
   }
 
@@ -344,25 +423,11 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
 
   @override
   Future<void> moveQueueItem(int oldIndex, int newIndex) async {
-    // 🚨 Standard Flutter Reorderable math fix
     if (oldIndex < newIndex) newIndex -= 1;
-    
-    // 1. Move it in our local List
     final item = _dynamicQueue.removeAt(oldIndex);
     _dynamicQueue.insert(newIndex, item);
-    
-    // 2. Notify the UI
     queue.add(List.from(_dynamicQueue));
-    
-    // 3. Update the Current Index if the playing song was moved
-    // (This keeps the music from stopping when you drag the active song)
-    if (_currentIndex == oldIndex) {
-      _currentIndex = newIndex;
-    } else if (oldIndex < _currentIndex && newIndex >= _currentIndex) {
-      _currentIndex -= 1;
-    } else if (oldIndex > _currentIndex && newIndex <= _currentIndex) {
-      _currentIndex += 1;
-    }
+    if (_currentIndex == oldIndex) _currentIndex = newIndex;
   }
 
   @override
@@ -372,34 +437,50 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   Future<void> clearQueue() async {
-    if (_dynamicQueue.isEmpty) return;
-
-    // Keep the currently playing song, remove everything else
-    final MediaItem? currentItem = mediaItem.value;
-    
     _dynamicQueue.clear();
-    
-    if (currentItem != null) {
-      _dynamicQueue.add(currentItem);
-      _currentIndex = 0;
-    } else {
-      _currentIndex = -1;
-    }
+    queue.add([]);
+    _currentIndex = -1;
+  }
 
-    // Update the UI stream
+  Future<void> playPlaylist(List<MediaItem> mediaItems, {int startIndex = 0}) async {
+    if (mediaItems.isEmpty) return;
+
+    _dynamicQueue.clear();
+    _dynamicQueue.addAll(mediaItems);
     queue.add(List.from(_dynamicQueue));
-    print('🧹 [AudioHandler] Queue cleared (Current song preserved)');
+
+    // Make sure the index is valid
+    _currentIndex = startIndex.clamp(0, mediaItems.length - 1);
+    
+    final targetItem = _dynamicQueue[_currentIndex];
+    mediaItem.add(targetItem);
+    
+    // Start playing the selected song
+    _handlePlayback(targetItem);
   }
 
-  // 🚨 NEW: EQ Controllers for the UI
+  // 8. HELPERS & LIFECYCLE
   AndroidEqualizer get equalizer => _equalizer;
+  Future<void> toggleEQ(bool enable) async => await _equalizer.setEnabled(enable);
 
-  Future<void> toggleEQ(bool enable) async {
-    await _equalizer.setEnabled(enable);
-  }
+  @override Future<void> play() => _player.play();
+  @override Future<void> pause() => _player.pause();
+  @override Future<void> seek(Duration position) => _player.seek(position);
+  @override Future<void> stop() => _player.stop();
 
   void dispose() {
     _youtubeExplode.close();
     _player.dispose();
+  }
+
+  Future<void> _cleanCacheIfTooBig() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final files = dir.listSync().whereType<File>().where((f) => f.path.endsWith('.mp4')).toList();
+      if (files.length > 100) {
+        files.sort((a, b) => a.lastModifiedSync().compareTo(b.lastModifiedSync()));
+        for (int i = 0; i < 20; i++) { await files[i].delete(); }
+      }
+    } catch (e) { print('Janitor Error: $e'); }
   }
 }

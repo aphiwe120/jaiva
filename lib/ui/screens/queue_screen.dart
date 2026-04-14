@@ -57,67 +57,99 @@ class QueueScreen extends ConsumerWidget {
       ),
       body: StreamBuilder<List<MediaItem>>(
         stream: audioHandler.queue,
-        builder: (context, snapshot) {
-          final queue = snapshot.data ?? [];
+        builder: (context, queueSnapshot) {
+          final fullQueue = queueSnapshot.data ?? [];
 
-          if (queue.isEmpty) {
-            return const Center(
-              child: Text('Your queue is empty', style: TextStyle(color: Colors.grey, fontSize: 16)),
-            );
-          }
+          // 2. Listen to the Currently Playing Song
+          return StreamBuilder<MediaItem?>(
+            stream: audioHandler.mediaItem,
+            builder: (context, mediaItemSnapshot) {
+              final currentSong = mediaItemSnapshot.data;
 
-          return ReorderableListView.builder(
-            itemCount: queue.length,
-            // 🚨 Crucial: Every item needs a Unique Key for the drag-animation to work
-            itemBuilder: (context, index) {
-              final item = queue[index];
-              return Dismissible(
-                key: ValueKey('dismiss_${item.id}'), // Unique key for swipe-to-delete
-                direction: DismissDirection.endToStart,
-                background: Container(
-                  alignment: Alignment.centerRight,
-                  padding: const EdgeInsets.only(right: 20),
-                  color: Colors.redAccent.withOpacity(0.8),
-                  child: const Icon(Icons.delete_outline, color: Colors.white),
-                ),
-                onDismissed: (_) => audioHandler.removeQueueItem(item),
-                child: ListTile(
-                  key: ValueKey(item.id), // 👈 Unique ID is mandatory!
-                  leading: CachedNetworkImage(
-                    imageUrl: item.artUri?.toString() ?? '',
-                    width: 50,
-                    height: 50,
-                    fit: BoxFit.cover,
-                    errorWidget: (context, url, error) => Container(
-                      width: 50,
-                      height: 50,
-                      color: Colors.grey[800],
-                      child: const Icon(Icons.music_note, color: Colors.white54),
+              if (fullQueue.isEmpty) {
+                return const Center(
+                  child: Text('Your queue is empty', style: TextStyle(color: Colors.grey, fontSize: 16)),
+                );
+              }
+
+              // 3. Find where we are in the list
+              int currentIndex = fullQueue.indexWhere((item) => item.id == currentSong?.id);
+              
+              // Safety check: if the song isn't found, default to 0
+              if (currentIndex == -1) currentIndex = 0;
+
+              // 🚨 THE MAGIC: Slice the list from current index onwards
+              final displayQueue = fullQueue.sublist(currentIndex);
+
+              return ReorderableListView.builder(
+                itemCount: displayQueue.length,
+                itemBuilder: (context, visibleIndex) {
+                  final item = displayQueue[visibleIndex];
+                  
+                  // The actual index in the full queue
+                  final actualIndex = currentIndex + visibleIndex;
+                  
+                  // Is this the currently playing song?
+                  final isNowPlaying = visibleIndex == 0;
+
+                  return Dismissible(
+                    key: ValueKey('dismiss_${item.id}'),
+                    direction: DismissDirection.endToStart,
+                    background: Container(
+                      alignment: Alignment.centerRight,
+                      padding: const EdgeInsets.only(right: 20),
+                      color: Colors.redAccent.withOpacity(0.8),
+                      child: const Icon(Icons.delete_outline, color: Colors.white),
                     ),
-                  ),
-                  title: Text(
-                    item.title,
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: Text(
-                    item.artist ?? 'Unknown Artist',
-                    style: const TextStyle(color: Colors.white54),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  trailing: const Icon(Icons.drag_handle, color: Colors.white24),
-                  onTap: () {
-                    audioHandler.playMediaItem(item);
-                    Navigator.pop(context); // Close queue after playing
-                  },
-                ),
+                    onDismissed: (_) => audioHandler.removeQueueItem(item),
+                    child: ListTile(
+                      key: ValueKey(item.id),
+                      leading: CachedNetworkImage(
+                        imageUrl: item.artUri?.toString() ?? '',
+                        width: 50,
+                        height: 50,
+                        fit: BoxFit.cover,
+                        errorWidget: (context, url, error) => Container(
+                          width: 50,
+                          height: 50,
+                          color: Colors.grey[800],
+                          child: const Icon(Icons.music_note, color: Colors.white54),
+                        ),
+                      ),
+                      title: Text(
+                        item.title,
+                        style: TextStyle(
+                          color: isNowPlaying ? Colors.green : Colors.white,
+                          fontWeight: isNowPlaying ? FontWeight.bold : FontWeight.w600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        item.artist ?? 'Unknown Artist',
+                        style: TextStyle(
+                          color: isNowPlaying ? Colors.green.withOpacity(0.7) : Colors.white54,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: isNowPlaying
+                          ? const Icon(Icons.equalizer, color: Colors.green, size: 24)
+                          : const Icon(Icons.drag_handle, color: Colors.white24),
+                      onTap: () {
+                        // Jump to the tapped song using absolute queue index
+                        audioHandler.skipToQueueItem(actualIndex);
+                      },
+                    ),
+                  );
+                },
+                onReorder: (oldIndex, newIndex) {
+                  // Convert display indices back to actual queue indices
+                  final actualOldIndex = currentIndex + oldIndex;
+                  final actualNewIndex = currentIndex + newIndex;
+                  audioHandler.moveQueueItem(actualOldIndex, actualNewIndex);
+                },
               );
-            },
-            // 🚨 This sends the new position back to the engine
-            onReorder: (oldIndex, newIndex) {
-              audioHandler.moveQueueItem(oldIndex, newIndex);
             },
           );
         },

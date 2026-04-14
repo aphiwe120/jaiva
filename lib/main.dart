@@ -1,24 +1,23 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart'; // REQUIRED FOR RIVERPOD
-import 'package:hive_flutter/hive_flutter.dart';         // REQUIRED FOR MOBILE HIVE
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+// Note: We don't need shared_preferences or lock_screen.dart anymore!
 
-import 'package:jaiva/ui/screens/lock_screen.dart'; // We will build this next!
+import 'package:jaiva/ui/screens/auth/auth_gate.dart';
 import 'package:jaiva/models/song.dart';
 import 'package:jaiva/models/playlist.dart';
 import 'package:jaiva/core/background_audio_handler.dart';
 import 'package:jaiva/core/music_repository.dart';
-import 'package:jaiva/core/player_provider.dart'; // Assuming you have your audioHandlerProvider here
-import 'package:jaiva/ui/screens/home_screen.dart'; // REQUIRED FOR THE HOME SCREEN
+import 'package:jaiva/core/player_provider.dart'; 
 
 BackgroundAudioHandler? _audioHandler;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 1. Initialize Hive (Your existing code)
+  // 1. Initialize Hive
   await Hive.initFlutter();
   Hive.registerAdapter(SongAdapter());
   Hive.registerAdapter(PlaylistAdapter());
@@ -31,7 +30,7 @@ Future<void> main() async {
   // 2. 🚨 INITIALIZE SUPABASE
   await Supabase.initialize(
     url: 'https://iwabmausbitaphmqyfwg.supabase.co',
-    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3YWJtYXVzYml0YXBobXF5ZndnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU5MDE5MDcsImV4cCI6MjA5MTQ3NzkwN30.9rjhb-lF8SCY5OILkl3XOMR-IL-XI7-rIdSceIvFukQ', // <-- Grab this from your Supabase dashboard!
+    anonKey:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3YWJtYXVzYml0YXBobXF5ZndnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU5MDE5MDcsImV4cCI6MjA5MTQ3NzkwN30.9rjhb-lF8SCY5OILkl3XOMR-IL-XI7-rIdSceIvFukQ', // I hid it here for text brevity, but keep yours!
   );
 
   // 3. Initialize Music Repository and AudioService
@@ -50,25 +49,19 @@ Future<void> main() async {
     debugPrint('❌ Error initializing AudioService: $e');
   }
 
-  // 4. Check if they already logged in previously!
-  final prefs = await SharedPreferences.getInstance();
-  final savedCode = prefs.getString('vip_code');
-
+  // 4. 🚀 RUN APP (Notice how clean this is now!)
   runApp(
     ProviderScope(
       overrides: [
         audioHandlerProvider.overrideWithValue(_audioHandler!),
       ],
-      // 5. 🚨 ROUTING LOGIC: If they have a saved code, go home. If not, hit the bouncer.
-      child: MyApp(initialRoute: savedCode != null ? '/home' : '/lock'),
+      child: const MyApp(),
     ),
   );
 }
 
 class MyApp extends StatelessWidget {
-  final String initialRoute;
-
-  const MyApp({super.key, required this.initialRoute});
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -78,12 +71,8 @@ class MyApp extends StatelessWidget {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF121212),
       ),
-      // 🚨 The routing logic
-      initialRoute: initialRoute,
-      routes: {
-        '/lock': (context) => const LockScreen(),
-        '/home': (context) => const HomeScreen(), // Your existing home screen
-      },
+      // 🚨 NEW ROUTING LOGIC: We let the AuthGate decide what screen to show!
+      home: const AuthGate(), 
     );
   }
 }
