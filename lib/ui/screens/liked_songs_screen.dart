@@ -3,10 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:audio_service/audio_service.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:jaiva/models/song.dart';
 import 'package:jaiva/core/player_provider.dart';
 import 'package:jaiva/ui/widgets/mini_player.dart';
 import 'package:jaiva/ui/widgets/song_options_sheet.dart';
+import 'package:jaiva/theme/kinetic_vault_theme.dart';
+import 'package:jaiva/ui/widgets/kinetic_song_tile.dart';
 
 class LikedSongsScreen extends ConsumerWidget {
   const LikedSongsScreen({super.key});
@@ -14,14 +18,27 @@ class LikedSongsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
+      backgroundColor: const Color(0xFF0F0F0F),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF121212),
+        backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Text('Liked Songs', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(
+          'Liked Songs',
+          style: GoogleFonts.outfit(
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+            fontSize: 24,
+          ),
+        ),
       ),
       body: Stack(
         children: [
+          // 🎨 Kinetic Vault: Aura Orb Background
+          const AuraOrb(
+            auraValue: 0.8, // Cyan for liked/favorites
+            size: 400.0,
+          ),
+
           // 🚨 Wrapped in Positioned.fill to prevent the Red Screen of Death!
           Positioned.fill(
             child: ValueListenableBuilder<Box<Song>>(
@@ -31,45 +48,47 @@ class LikedSongsScreen extends ConsumerWidget {
                 final likedSongs = box.values.toList().reversed.toList(); // Newest likes at the top
 
                 if (likedSongs.isEmpty) {
-                  return const Center(
+                  return Center(
                     child: Text(
                       "You haven't liked any songs yet.\nTap the heart icon on a track!",
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white54, fontSize: 16),
+                      style: GoogleFonts.outfit(
+                        color: Colors.white54,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w300,
+                      ),
                     ),
                   );
                 }
 
                 return CustomScrollView(
                   slivers: [
-                    // --- THE FANCY HEADER ---
+                    // --- THE KINETIC VAULT HEADER ---
                     SliverToBoxAdapter(
-                      child: Container(
-                        padding: const EdgeInsets.all(24),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Colors.deepPurple.withOpacity(0.8),
-                              const Color(0xFF121212),
-                            ],
-                          ),
-                        ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(24.0),
                         child: Row(
                           children: [
+                            // 💖 Heart Icon Container
                             Container(
                               width: 100,
                               height: 100,
                               decoration: BoxDecoration(
                                 gradient: const LinearGradient(
-                                  colors: [Colors.deepPurple, Colors.white70],
+                                  colors: [
+                                    Color(0xFFEC4899),
+                                    Color(0xFF7C3AED),
+                                  ],
                                   begin: Alignment.topLeft,
                                   end: Alignment.bottomRight,
                                 ),
-                                borderRadius: BorderRadius.circular(8),
+                                borderRadius: BorderRadius.circular(16),
                                 boxShadow: [
-                                  BoxShadow(color: Colors.black.withOpacity(0.5), blurRadius: 10, offset: const Offset(0, 5))
+                                  BoxShadow(
+                                    color: const Color(0xFFEC4899).withOpacity(0.5),
+                                    blurRadius: 20.0,
+                                    spreadRadius: 5.0,
+                                  )
                                 ],
                               ),
                               child: const Icon(Icons.favorite, color: Colors.white, size: 50),
@@ -79,9 +98,23 @@ class LikedSongsScreen extends ConsumerWidget {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const Text("Liked Songs", style: TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold)),
+                                  Text(
+                                    "Liked Songs",
+                                    style: GoogleFonts.outfit(
+                                      color: Colors.white,
+                                      fontSize: 28,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
                                   const SizedBox(height: 8),
-                                  Text("${likedSongs.length} songs", style: const TextStyle(color: Colors.white70, fontSize: 14)),
+                                  Text(
+                                    "${likedSongs.length} songs",
+                                    style: GoogleFonts.outfit(
+                                      color: Colors.white70,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w300,
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
@@ -90,40 +123,33 @@ class LikedSongsScreen extends ConsumerWidget {
                       ),
                     ),
 
-                    // --- THE SONGS LIST ---
+                    // --- THE SONGS MASONRY GRID ---
                     SliverPadding(
-                      padding: const EdgeInsets.only(bottom: 120),
-                      sliver: SliverList(
+                      padding: const EdgeInsets.all(16.0).copyWith(bottom: 140),
+                      sliver: SliverGrid(
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          mainAxisSpacing: 12.0,
+                          crossAxisSpacing: 12.0,
+                          childAspectRatio: 0.85,
+                        ),
                         delegate: SliverChildBuilderDelegate(
                           (context, index) {
                             final song = likedSongs[index];
-                            return ListTile(
-                              leading: ClipRRect(
-                                borderRadius: BorderRadius.circular(4),
-                                child: CachedNetworkImage(
-                                  imageUrl: song.thumbnailUrl,
-                                  width: 50,
-                                  height: 50,
-                                  fit: BoxFit.cover,
-                                ),
-                              ),
-                              title: Text(song.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500), maxLines: 1),
-                              subtitle: Text(song.artist, style: const TextStyle(color: Colors.grey)),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.more_vert, color: Colors.white54, size: 20),
-                                onPressed: () {
-                                  // Open your master options sheet!
-                                  SongOptionsSheet.show(context, song);
-                                },
-                              ),
+                            return KineticSongTile(
+                              song: song,
+                              bpm: 120.0,
+                              genre: 'Liked',
                               onTap: () {
-                                // Play the song!
                                 ref.read(audioHandlerProvider).playMediaItem(MediaItem(
                                   id: song.id,
                                   title: song.title,
                                   artist: song.artist,
                                   artUri: Uri.parse(song.thumbnailUrl),
                                 ));
+                              },
+                              onLongPress: () {
+                                SongOptionsSheet.show(context, song);
                               },
                             );
                           },

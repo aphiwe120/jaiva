@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:audio_service/audio_service.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:jaiva/models/song.dart';
 import 'package:jaiva/core/player_provider.dart';
 import 'package:jaiva/core/search_provider.dart';
@@ -11,6 +12,8 @@ import 'package:jaiva/ui/widgets/jaiva_bottom_nav.dart';
 import 'package:jaiva/ui/screens/history_screen.dart';
 import 'package:jaiva/ui/screens/settings_screen.dart';
 import 'package:jaiva/ui/screens/vault_screen.dart';
+import 'package:jaiva/theme/kinetic_vault_theme.dart';
+import 'package:jaiva/ui/widgets/kinetic_song_tile.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -25,9 +28,15 @@ class HomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
+      backgroundColor: const Color(0xFF0F0F0F),
       body: Stack(
         children: [
+          // 🎨 Kinetic Vault: Aura Orb Background
+          const AuraOrb(
+            auraValue: 0.5,
+            size: 400.0,
+          ),
+
           // 🚨 FIX: Wrapped the scrolling area in Positioned.fill to prevent the crash!
           Positioned.fill(
             child: SafeArea(
@@ -42,7 +51,11 @@ class HomeScreen extends ConsumerWidget {
                           Expanded(
                             child: Text(
                               _getGreeting(),
-                              style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+                              style: GoogleFonts.outfit(
+                                color: Colors.white,
+                                fontSize: 28,
+                                fontWeight: FontWeight.w800,
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -89,40 +102,41 @@ class HomeScreen extends ConsumerWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                              child: Text('Recently Played', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 16.0),
+                              child: Text(
+                                'Recently Played',
+                                style: GoogleFonts.outfit(
+                                  color: Colors.white,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
                             ),
                             SizedBox(
-                              height: 160,
+                              height: 180,
                               child: ListView.builder(
                                 scrollDirection: Axis.horizontal,
                                 padding: const EdgeInsets.symmetric(horizontal: 16),
                                 itemCount: historySongs.length,
                                 itemBuilder: (context, index) {
                                   final song = historySongs[index];
-                                  return GestureDetector(
-                                    onTap: () {
-                                      ref.read(audioHandlerProvider).playMediaItem(MediaItem(
-                                        id: song.id, title: song.title, artist: song.artist, artUri: Uri.parse(song.thumbnailUrl),
-                                      ));
-                                    },
-                                    child: Container(
-                                      width: 110,
-                                      margin: const EdgeInsets.only(right: 16),
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          ClipRRect(
-                                            borderRadius: BorderRadius.circular(8),
-                                            child: CachedNetworkImage(
-                                              imageUrl: song.thumbnailUrl, height: 110, width: 110, fit: BoxFit.cover,
-                                              errorWidget: (context, url, error) => Container(color: Colors.grey[800], child: const Icon(Icons.music_note, color: Colors.white)),
-                                            ),
-                                          ),
-                                          const SizedBox(height: 8),
-                                          Text(song.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 12)),
-                                        ],
+                                  return Padding(
+                                    padding: const EdgeInsets.only(right: 12),
+                                    child: SizedBox(
+                                      width: 140,
+                                      child: KineticSongTile(
+                                        song: song,
+                                        bpm: 120.0, // Will be dynamic later
+                                        genre: 'Amapiano',
+                                        onTap: () {
+                                          ref.read(audioHandlerProvider).playMediaItem(MediaItem(
+                                            id: song.id,
+                                            title: song.title,
+                                            artist: song.artist,
+                                            artUri: Uri.parse(song.thumbnailUrl),
+                                          ));
+                                        },
                                       ),
                                     ),
                                   );
@@ -136,15 +150,22 @@ class HomeScreen extends ConsumerWidget {
                   ),
 
                   // --- TRENDING MASKANDI / AMAPIANO ---
-                  const SliverToBoxAdapter(
+                  SliverToBoxAdapter(
                     child: Padding(
-                      padding: EdgeInsets.fromLTRB(16, 24, 16, 12),
-                      child: Text("Trending in South Africa", style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                      padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
+                      child: Text(
+                        "Trending in South Africa",
+                        style: GoogleFonts.outfit(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
                     ),
                   ),
                   SliverToBoxAdapter(
                     child: SizedBox(
-                      height: 180,
+                      height: 220,
                       child: ref.watch(trendingProvider).when(
                         data: (trendingSongs) {
                           return ListView.builder(
@@ -153,25 +174,22 @@ class HomeScreen extends ConsumerWidget {
                             itemCount: trendingSongs.length,
                             itemBuilder: (context, index) {
                               final song = trendingSongs[index];
-                              return GestureDetector(
-                                onTap: () {
-                                  ref.read(audioHandlerProvider).playMediaItem(MediaItem(
-                                    id: song.id, title: song.title, artist: song.artist, artUri: Uri.parse(song.thumbnailUrl),
-                                  ));
-                                },
-                                child: Container(
-                                  width: 140,
-                                  margin: const EdgeInsets.symmetric(horizontal: 8),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      ClipRRect(
-                                        borderRadius: BorderRadius.circular(12),
-                                        child: CachedNetworkImage(imageUrl: song.thumbnailUrl, width: 140, height: 140, fit: BoxFit.cover),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(song.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis),
-                                    ],
+                              return Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 8),
+                                child: SizedBox(
+                                  width: 160,
+                                  child: KineticSongTile(
+                                    song: song,
+                                    bpm: 128.0, // Trending songs are typically upbeat
+                                    genre: 'Amapiano',
+                                    onTap: () {
+                                      ref.read(audioHandlerProvider).playMediaItem(MediaItem(
+                                        id: song.id,
+                                        title: song.title,
+                                        artist: song.artist,
+                                        artUri: Uri.parse(song.thumbnailUrl),
+                                      ));
+                                    },
                                   ),
                                 ),
                               );

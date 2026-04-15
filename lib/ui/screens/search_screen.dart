@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:audio_service/audio_service.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:jaiva/core/search_provider.dart';
 import 'package:jaiva/core/player_provider.dart';
 import 'package:jaiva/ui/widgets/add_to_playlist_sheet.dart';
@@ -10,6 +12,8 @@ import 'package:jaiva/models/song.dart';
 import 'package:jaiva/ui/widgets/mini_player.dart';
 import 'package:jaiva/ui/widgets/jaiva_bottom_nav.dart';
 import 'package:jaiva/ui/widgets/song_options_sheet.dart';
+import 'package:jaiva/theme/kinetic_vault_theme.dart';
+import 'package:jaiva/ui/widgets/kinetic_song_tile.dart';
 
 class SearchScreen extends ConsumerStatefulWidget {
   const SearchScreen({super.key});
@@ -36,44 +40,65 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final searchQuery = ref.watch(searchProvider);
 
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
+      backgroundColor: const Color(0xFF0F0F0F),
       body: Stack(
         children: [
-          // 🚨 FIX: Wrapped the column area in Positioned.fill to prevent the crash!
+          // 🎨 Kinetic Vault: Aura Orb Background
+          const AuraOrb(
+            auraValue: 0.6, // Cyan/Emerald for Dark Tech
+            size: 400.0,
+          ),
+
           Positioned.fill(
             child: SafeArea(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(16, 24, 16, 16),
-                    child: Text("Search", style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold)),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
+                    child: Text(
+                      "Search",
+                      style: GoogleFonts.outfit(
+                        color: Colors.white,
+                        fontSize: 32,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                   ),
                   
-                  // Search Bar
+                  // 🎧 Search Bar with GlassCard
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                    child: Container(
-                      height: 46,
-                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(6)),
+                    child: GlassCard(
+                      padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                      borderRadius: 12.0,
+                      backgroundColor: Colors.white.withOpacity(0.08),
                       child: TextField(
                         controller: _searchController,
                         focusNode: _focusNode,
-                        style: const TextStyle(color: Colors.black, fontSize: 16, fontWeight: FontWeight.w500),
-                        decoration: const InputDecoration(
+                        style: GoogleFonts.outfit(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w300,
+                        ),
+                        decoration: InputDecoration(
                           hintText: "What do you want to listen to?",
-                          hintStyle: TextStyle(fontSize: 16, color: Colors.black54, fontWeight: FontWeight.w500),
-                          prefixIcon: Icon(Icons.search, size: 28, color: Colors.black87),
+                          hintStyle: GoogleFonts.outfit(
+                            fontSize: 14,
+                            color: Colors.white54,
+                            fontWeight: FontWeight.w300,
+                          ),
+                          prefixIcon: const Icon(Icons.search, size: 24, color: Colors.white70),
                           border: InputBorder.none,
-                          contentPadding: EdgeInsets.symmetric(vertical: 12),
+                          contentPadding: const EdgeInsets.symmetric(vertical: 12),
                         ),
                         onChanged: (query) {
                           if (_debounce?.isActive ?? false) _debounce!.cancel();
                           _debounce = Timer(const Duration(milliseconds: 500), () {
                             if (query.trim().isNotEmpty) {
+                              // 👇 FIX 1: Let Riverpod handle the rebuild, no setState() needed!
                               ref.read(searchProvider.notifier).search(query.trim());
                             }
-                            setState(() {}); // Trigger rebuild to show/hide results
                           });
                         },
                       ),
@@ -82,44 +107,76 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   
                   const SizedBox(height: 16),
 
-                  // Results List
+                  // Results Grid
                   Expanded(
                     child: _searchController.text.isEmpty
-                        ? const Center(child: Text("Browse categories coming soon", style: TextStyle(color: Colors.grey)))
+                        ? Center(
+                            child: Text(
+                              "Browse categories coming soon",
+                              style: GoogleFonts.outfit(
+                                color: Colors.white54,
+                                fontWeight: FontWeight.w300,
+                              ),
+                            ),
+                          )
                         : searchQuery.when(
-                            data: (songs) => ListView.builder(
+                            // 👇 FIX: Swapped MasonryGridView for standard GridView.builder
+                            data: (songs) => GridView.builder(
+                              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 2,
+                                mainAxisSpacing: 16.0,
+                                crossAxisSpacing: 16.0,
+                                childAspectRatio: 0.75, // Keeps the cards tall and sleek!
+                              ),
+                              padding: const EdgeInsets.all(16.0).copyWith(bottom: 140),
                               itemCount: songs.length,
-                              padding: const EdgeInsets.only(bottom: 120),
                               itemBuilder: (context, index) {
                                 final song = songs[index];
-                                return ListTile(
-                                  leading: CachedNetworkImage(imageUrl: song.thumbnailUrl, width: 50, height: 50, fit: BoxFit.cover),
-                                  title: Text(song.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500), maxLines: 1),
-                                  subtitle: Text(song.artist, style: const TextStyle(color: Colors.grey)),
-                                  trailing: IconButton(
-                                    icon: const Icon(Icons.more_vert, color: Colors.white54, size: 20),
-                                    onPressed: () {
-                                      final songToAdd = Song(
-                                        id: song.id,
-                                        title: song.title,
-                                        artist: song.artist,
-                                        thumbnailUrl: song.thumbnailUrl,
-                                      );
-                                      // 🚨 OPEN THE NEW OPTIONS SHEET INSTEAD!
-                                      SongOptionsSheet.show(context, songToAdd);
-                                    },
+                                return KineticSongTile(
+                                  key: ValueKey(song.id), 
+                                  song: Song(
+                                    id: song.id,
+                                    title: song.title,
+                                    artist: song.artist,
+                                    thumbnailUrl: song.thumbnailUrl,
+                                    genre: 'Search',
                                   ),
+                                  bpm: 120.0,
+                                  genre: 'Search',
                                   onTap: () {
                                     _focusNode.unfocus();
                                     ref.read(audioHandlerProvider).playMediaItem(MediaItem(
-                                      id: song.id, title: song.title, artist: song.artist, artUri: Uri.parse(song.thumbnailUrl),
+                                      id: song.id,
+                                      title: song.title,
+                                      artist: song.artist,
+                                      artUri: Uri.parse(song.thumbnailUrl),
                                     ));
+                                  },
+                                  onLongPress: () {
+                                    final songToAdd = Song(
+                                      id: song.id,
+                                      title: song.title,
+                                      artist: song.artist,
+                                      thumbnailUrl: song.thumbnailUrl,
+                                      genre: 'Search',
+                                    );
+                                    SongOptionsSheet.show(context, songToAdd);
                                   },
                                 );
                               },
                             ),
-                            loading: () => const Center(child: CircularProgressIndicator(color: Colors.green)),
-                            error: (e, _) => Center(child: Text("Error: $e", style: const TextStyle(color: Colors.red))),
+                            loading: () => const Center(
+                              child: CircularProgressIndicator(color: Color(0xFF00E676)), 
+                            ),
+                            error: (e, _) => Center(
+                              child: Text(
+                                "Error: $e",
+                                style: GoogleFonts.outfit(
+                                  color: Colors.redAccent,
+                                  fontWeight: FontWeight.w300,
+                                ),
+                              ),
+                            ),
                           ),
                   ),
                 ],

@@ -16,10 +16,14 @@ class Song {
   @HiveField(3)
   final String thumbnailUrl;
 
+  @HiveField(4)
+  final String genre;
+
   Song({
     required this.id,
     required this.title,
     required this.artist,
     required this.thumbnailUrl,
+    this.genre = 'Unknown',
   });
 }

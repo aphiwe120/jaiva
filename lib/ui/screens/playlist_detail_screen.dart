@@ -3,10 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:audio_service/audio_service.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import 'package:jaiva/models/playlist.dart';
 import 'package:jaiva/core/player_provider.dart';
 import 'package:jaiva/ui/widgets/mini_player.dart';
 import 'package:jaiva/ui/widgets/song_options_sheet.dart';
+import 'package:jaiva/theme/kinetic_vault_theme.dart';
+import 'package:jaiva/ui/widgets/kinetic_song_tile.dart';
 
 class PlaylistDetailScreen extends ConsumerWidget {
   final Playlist playlist;
@@ -16,14 +20,27 @@ class PlaylistDetailScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
+      backgroundColor: const Color(0xFF0F0F0F),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF121212),
+        backgroundColor: Colors.transparent,
         elevation: 0,
-        title: Text(playlist.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(
+          playlist.name,
+          style: GoogleFonts.outfit(
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+            fontSize: 24,
+          ),
+        ),
       ),
       body: Stack(
         children: [
+          // 🎨 Kinetic Vault: Aura Orb Background
+          AuraOrb(
+            auraValue: 0.4 + (playlist.name.hashCode % 10) / 10,
+            size: 400.0,
+          ),
+
           // 🚨 Wrapped in Positioned.fill to prevent the Red Screen of Death!
           Positioned.fill(
             child: ValueListenableBuilder<Box<Playlist>>(
@@ -39,39 +56,31 @@ class PlaylistDetailScreen extends ConsumerWidget {
                 final songs = currentPlaylist.songs;
 
                 if (songs.isEmpty) {
-                  return const Center(
+                  return Center(
                     child: Text(
                       "This playlist is empty.\nGo find some music!",
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white54, fontSize: 16),
+                      style: GoogleFonts.outfit(
+                        color: Colors.white54,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w300,
+                      ),
                     ),
                   );
                 }
 
-                return ListView.builder(
-                  padding: const EdgeInsets.only(bottom: 120, top: 16),
+                return MasonryGridView.count(
+                  crossAxisCount: 2,
+                  mainAxisSpacing: 12.0,
+                  crossAxisSpacing: 12.0,
+                  padding: const EdgeInsets.all(16.0).copyWith(bottom: 140),
                   itemCount: songs.length,
                   itemBuilder: (context, index) {
                     final song = songs[index];
-                    return ListTile(
-                      leading: ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: CachedNetworkImage(
-                          imageUrl: song.thumbnailUrl,
-                          width: 50,
-                          height: 50,
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                      title: Text(song.title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500), maxLines: 1),
-                      subtitle: Text(song.artist, style: const TextStyle(color: Colors.grey)),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.more_vert, color: Colors.white54, size: 20),
-                        onPressed: () {
-                           // Open your master options sheet!
-                           SongOptionsSheet.show(context, song);
-                        },
-                      ),
+                    return KineticSongTile(
+                      song: song,
+                      bpm: 120.0, // Will be dynamic later
+                      genre: 'Playlist',
                       onTap: () {
                         // 🚨 NEW: Pass the entire playlist and start at the tapped song
                         final audioHandler = ref.read(audioHandlerProvider);
@@ -83,6 +92,9 @@ class PlaylistDetailScreen extends ConsumerWidget {
                         )).toList();
                         
                         audioHandler.playPlaylist(mediaItems, startIndex: index);
+                      },
+                      onLongPress: () {
+                        SongOptionsSheet.show(context, song);
                       },
                     );
                   },

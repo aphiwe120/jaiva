@@ -15,6 +15,9 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:jaiva/ui/widgets/playback_progress_bar.dart';
 import 'package:jaiva/ui/widgets/synchronized_lyrics.dart';
 import 'package:jaiva/ui/widgets/eq_mixer.dart';
+import 'package:jaiva/theme/kinetic_vault_theme.dart';
+import 'package:jaiva/ui/widgets/dna_core_disk.dart';
+import 'package:jaiva/ui/widgets/ghost_toggle.dart';
 
 class NowPlayingScreen extends ConsumerStatefulWidget {
   const NowPlayingScreen({super.key});
@@ -53,22 +56,17 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
           body: Stack(
             fit: StackFit.expand,
             children: [
-              AnimatedContainer(
-                duration: const Duration(seconds: 1),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [theme.vibrant.withOpacity(0.8), theme.dominant.withOpacity(0.9), Colors.black],
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                  ),
-                ),
+              // 🎨 Kinetic Vault: Aura Orb Background
+              const AuraOrb(
+                auraValue: 0.5,
+                size: 400.0,
               ),
-              RepaintBoundary(
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 50.0, sigmaY: 50.0),
-                  child: Container(color: Colors.black.withOpacity(0.2)),
-                ),
+              
+              // Dark overlay for readability
+              Container(
+                color: const Color(0xFF0F0F0F).withOpacity(0.7),
               ),
+              
               SafeArea(
                 child: Column(
                   children: [
@@ -80,7 +78,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                       child: Padding(
                         padding: const EdgeInsets.only(right: 16.0),
                         child: IconButton(
-                          icon: Icon(_showLyrics ? Icons.lyrics : Icons.lyrics_outlined, color: _showLyrics ? Colors.green : Colors.white, size: 28),
+                          icon: Icon(_showLyrics ? Icons.lyrics : Icons.lyrics_outlined, color: _showLyrics ? const Color(0xFF00E676) : Colors.white, size: 28),
                           onPressed: () {
                             setState(() {
                               _showLyrics = !_showLyrics;
@@ -102,26 +100,13 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                                   audioHandler.skipToNext();
                                 }
                               },
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.3),
-                                      blurRadius: 20,
-                                      offset: const Offset(0, 10),
-                                    ), // Adds a premium drop shadow
-                                  ],
-                                ),
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(20), // Premium rounded corners
-                                  child: CachedNetworkImage(
-                                    imageUrl: imageUrl,
-                                    cacheManager: CacheConfig.imageCache,
-                                    memCacheWidth: 600,
-                                    fit: BoxFit.cover, // 👈 THE MAGIC WORD: Crops it perfectly into a square instead of squishing!
-                                    errorWidget: (context, error, stackTrace) => 
-                                      Container(color: Colors.grey.shade800, child: const Icon(Icons.music_note, size: 100, color: Colors.white)),
-                                  ),
+                              child: Center(
+                                child: DNACoreDisk(
+                                  imagePath: imageUrl,
+                                  isNetworkImage: true,
+                                  bpm: 120.0, // Will be dynamic from song DNA later
+                                  auraColor: 0.5, // Will be dynamic from song DNA later
+                                  isPlaying: true, // Update from player state
                                 ),
                               ),
                             ),
@@ -176,92 +161,126 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                     ),
                     const SizedBox(height: 24),
                     
-                    // 🚨 DROP THE NEW PROGRESS BAR HERE!
+                    // 🚨 PLAYBACK PROGRESS BAR
                     const PlaybackProgressBar(),
                     
                     const SizedBox(height: 24),
                     
-                    // Your existing Play / Pause / Skip buttons go here...
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        IconButton(
-                          iconSize: 40,
-                          icon: const Icon(Icons.skip_previous, color: Colors.white),
-                          onPressed: () => audioHandler.skipToPrevious(),
-                        ),
-                        StreamBuilder<PlaybackState>(
-                          stream: audioHandler.playbackState,
-                          builder: (context, stateSnapshot) {
-                            final playing = stateSnapshot.data?.playing ?? false;
-                            return Container(
-                              decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.white),
-                              child: IconButton(
-                                iconSize: 50,
-                                icon: Icon(playing ? Icons.pause : Icons.play_arrow, color: Colors.black),
-                                onPressed: () => playing ? audioHandler.pause() : audioHandler.play(),
-                              ),
-                            );
-                          }
-                        ),
-                        IconButton(
-                          iconSize: 40,
-                          icon: const Icon(Icons.skip_next, color: Colors.white),
-                          onPressed: () => audioHandler.skipToNext(),
-                        ),
-                        IconButton(
-                          iconSize: 28,
-                          icon: const Icon(Icons.queue_music, color: Colors.white70),
-                          onPressed: () {
-                            showModalBottomSheet(
-                              context: context,
-                              isScrollControlled: true,
-                              backgroundColor: Colors.transparent,
-                              builder: (context) => const FractionallySizedBox(
-                                heightFactor: 0.9,
-                                child: QueueScreen(),
-                              ),
-                            );
+                    // 👻 GHOST DJ TOGGLE
+                    ValueListenableBuilder<bool>(
+                      // 👇 The Stethoscope: It listens to the backend variable directly
+                      valueListenable: (audioHandler as dynamic).discoveryModeNotifier,
+                      builder: (context, isDiscoveryOn, _) {
+                        return GhostToggle(
+                          value: isDiscoveryOn, 
+                          onChanged: (value) {
+                            if (audioHandler is dynamic && (audioHandler as dynamic).toggleDiscoveryMode != null) {
+                               (audioHandler as dynamic).toggleDiscoveryMode();
+                            }
                           },
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.tune_rounded, color: Colors.white, size: 30),
-                          onPressed: () {
-                            showModalBottomSheet(
-                              context: context,
-                              backgroundColor: Colors.transparent,
-                              isScrollControlled: true,
-                              builder: (context) => EQMixer(equalizer: audioHandler.equalizer),
-                            );
-                          },
-                        ),
-                        ValueListenableBuilder<Box<Song>>(
-                          valueListenable: Hive.box<Song>('downloads').listenable(),
-                          builder: (context, box, _) {
-                            final isDownloaded = box.values.any((s) => s.id == mediaItem?.id);
-
-                            return IconButton(
-                              iconSize: 28,
-                              icon: Icon(
-                                isDownloaded ? Icons.offline_pin : Icons.download_for_offline_outlined,
-                                color: isDownloaded ? Colors.green : Colors.white,
+                          // Changes text based on the active state
+                          label: isDiscoveryOn ? 'Global Discovery ON' : 'Smart Shuffle OFF',
+                        );
+                      },
+                    ),
+                    
+                    const SizedBox(height: 24),
+                    
+                    // 🎧 GLASSOMORPHISM CONTROLS (With the FittedBox Fix!)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                      child: GlassCard(
+                        padding: const EdgeInsets.all(12.0),
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              IconButton(
+                                iconSize: 40,
+                                icon: const Icon(Icons.skip_previous, color: Colors.white),
+                                onPressed: () => audioHandler.skipToPrevious(),
                               ),
-                              onPressed: () {
-                                if (mediaItem != null && !isDownloaded) {
-                                  final currentSong = Song(
-                                    id: mediaItem.id,
-                                    title: mediaItem.title,
-                                    artist: mediaItem.artist ?? 'Unknown',
-                                    thumbnailUrl: mediaItem.artUri?.toString() ?? '',
+                              const SizedBox(width: 8),
+                              StreamBuilder<PlaybackState>(
+                                stream: audioHandler.playbackState,
+                                builder: (context, stateSnapshot) {
+                                  final playing = stateSnapshot.data?.playing ?? false;
+                                  return Container(
+                                    decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.white),
+                                    child: IconButton(
+                                      iconSize: 50,
+                                      icon: Icon(playing ? Icons.pause : Icons.play_arrow, color: Colors.black),
+                                      onPressed: () => playing ? audioHandler.pause() : audioHandler.play(),
+                                    ),
                                   );
-                                  // Trigger the download!
-                                  DownloadService.downloadSong(context, currentSong);
                                 }
-                              },
-                            );
-                          },
+                              ),
+                              const SizedBox(width: 8),
+                              IconButton(
+                                iconSize: 40,
+                                icon: const Icon(Icons.skip_next, color: Colors.white),
+                                onPressed: () => audioHandler.skipToNext(),
+                              ),
+                              const SizedBox(width: 8),
+                              IconButton(
+                                iconSize: 28,
+                                icon: const Icon(Icons.queue_music, color: Colors.white70),
+                                onPressed: () {
+                                  showModalBottomSheet(
+                                    context: context,
+                                    isScrollControlled: true,
+                                    backgroundColor: Colors.transparent,
+                                    builder: (context) => const FractionallySizedBox(
+                                      heightFactor: 0.9,
+                                      child: QueueScreen(),
+                                    ),
+                                  );
+                                },
+                              ),
+                              const SizedBox(width: 8),
+                              IconButton(
+                                icon: const Icon(Icons.tune_rounded, color: Colors.white, size: 30),
+                                onPressed: () {
+                                  showModalBottomSheet(
+                                    context: context,
+                                    backgroundColor: Colors.transparent,
+                                    isScrollControlled: true,
+                                    builder: (context) => EQMixer(equalizer: audioHandler.equalizer),
+                                  );
+                                },
+                              ),
+                              const SizedBox(width: 8),
+                              ValueListenableBuilder<Box<Song>>(
+                                valueListenable: Hive.box<Song>('downloads').listenable(),
+                                builder: (context, box, _) {
+                                  final isDownloaded = box.values.any((s) => s.id == mediaItem?.id);
+
+                                  return IconButton(
+                                    iconSize: 28,
+                                    icon: Icon(
+                                      isDownloaded ? Icons.offline_pin : Icons.download_for_offline_outlined,
+                                      color: isDownloaded ? const Color(0xFF00E676) : Colors.white,
+                                    ),
+                                    onPressed: () {
+                                      if (mediaItem != null && !isDownloaded) {
+                                        final currentSong = Song(
+                                          id: mediaItem.id,
+                                          title: mediaItem.title,
+                                          artist: mediaItem.artist ?? 'Unknown',
+                                          thumbnailUrl: mediaItem.artUri?.toString() ?? '',
+                                        );
+                                        // Trigger the download!
+                                        DownloadService.downloadSong(context, currentSong);
+                                      }
+                                    },
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
                         ),
-                      ],
+                      ),
                     ),
                     const SizedBox(height: 50),
                   ],

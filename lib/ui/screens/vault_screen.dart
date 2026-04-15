@@ -2,9 +2,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:audio_service/audio_service.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:jaiva/models/song.dart';
 import 'package:path_provider/path_provider.dart';
-// import 'package:jaiva/core/background_audio_handler.dart'; // Import your handler!
+import 'package:jaiva/theme/kinetic_vault_theme.dart';
+import 'package:jaiva/ui/widgets/kinetic_song_tile.dart';
 
 class VaultScreen extends StatelessWidget {
   final dynamic audioHandler; // Pass your BackgroundAudioHandler here
@@ -14,84 +16,84 @@ class VaultScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
+      backgroundColor: const Color(0xFF0F0F0F),
       appBar: AppBar(
-        title: const Text('The Vault 🗄️', style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.transparent,
         elevation: 0,
+        title: Text(
+          'The Vault 🗄️',
+          style: GoogleFonts.outfit(
+            color: Colors.white,
+            fontSize: 24,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
       ),
-      body: ValueListenableBuilder(
-        // 🚨 Listens to the Hive Box in real-time!
-        valueListenable: Hive.box<Song>('vault').listenable(),
-        builder: (context, Box<Song> box, _) {
-          final offlineSongs = box.values.toList().reversed.toList();
+      body: Stack(
+        children: [
+          // 🎨 Kinetic Vault: Aura Orb Background
+          const AuraOrb(
+            auraValue: 0.2, // Deep Indigo/Emerald for the Dark Tech Vault
+            size: 400.0,
+          ),
 
-          if (offlineSongs.isEmpty) {
-            return const Center(
-              child: Text(
-                'Your Vault is empty.\nStart listening to download songs!',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white54, fontSize: 16),
-              ),
-            );
-          }
+          // Main content
+          ValueListenableBuilder(
+            // 🚨 Listens to the Hive Box in real-time!
+            valueListenable: Hive.box<Song>('vault').listenable(),
+            builder: (context, Box<Song> box, _) {
+              final offlineSongs = box.values.toList().reversed.toList();
 
-          return ListView.builder(
-            physics: const BouncingScrollPhysics(),
-            itemCount: offlineSongs.length,
-            itemBuilder: (context, index) {
-              final song = offlineSongs[index];
-
-              return Dismissible(
-                key: Key(song.id),
-                direction: DismissDirection.endToStart,
-                background: Container(
-                  alignment: Alignment.centerRight,
-                  padding: const EdgeInsets.only(right: 20),
-                  color: Colors.redAccent,
-                  child: const Icon(Icons.delete_sweep_rounded, color: Colors.white, size: 30),
-                ),
-                onDismissed: (direction) => _deleteFromVault(song.id, box),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                  leading: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.network(
-                      song.thumbnailUrl,
-                      width: 55,
-                      height: 55,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => Container(
-                        width: 55, height: 55, color: Colors.white10,
-                        child: const Icon(Icons.music_note, color: Colors.white54),
-                      ),
+              if (offlineSongs.isEmpty) {
+                return Center(
+                  child: Text(
+                    'Your Vault is empty.\nStart listening to download songs!',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.outfit(
+                      color: Colors.white54,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w300,
                     ),
                   ),
-                  title: Text(
-                    song.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                  ),
-                  subtitle: Text(
-                    song.artist,
-                    style: const TextStyle(color: Colors.white54),
-                  ),
-                  trailing: const Icon(Icons.offline_pin_rounded, color: Colors.deepPurpleAccent),
-                  onTap: () {
-                    // 🚨 Play directly from the Vault!
-                    audioHandler.playMediaItem(MediaItem(
-                      id: song.id,
-                      title: song.title,
-                      artist: song.artist,
-                      artUri: Uri.parse(song.thumbnailUrl),
-                    ));
-                  },
+                );
+              }
+
+              // 👇 FIX: Replaced MasonryGridView with the stable GridView.builder
+              return GridView.builder(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  mainAxisSpacing: 16.0, // Tweaked spacing for the new cards
+                  crossAxisSpacing: 16.0,
+                  childAspectRatio: 0.75, // Keeps the cards tall and sleek!
                 ),
+                padding: const EdgeInsets.all(16.0).copyWith(bottom: 120), // Added bottom padding so the mini-player doesn't cover the last row
+                itemCount: offlineSongs.length,
+                itemBuilder: (context, index) {
+                  final song = offlineSongs[index];
+                  
+                  return KineticSongTile(
+                    // 👇 FIX: Added ValueKey to prevent rendering crashes
+                    key: ValueKey(song.id),
+                    song: song,
+                    bpm: 120.0, // Will be dynamic later
+                    genre: 'Offline',
+                    onTap: () {
+                      audioHandler.playMediaItem(MediaItem(
+                        id: song.id,
+                        title: song.title,
+                        artist: song.artist,
+                        artUri: Uri.parse(song.thumbnailUrl),
+                      ));
+                    },
+                    onLongPress: () {
+                      _deleteFromVault(song.id, box);
+                    },
+                  );
+                },
               );
             },
-          );
-        },
+          ),
+        ],
       ),
     );
   }

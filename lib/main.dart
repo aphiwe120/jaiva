@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:audio_service/audio_service.dart';
@@ -10,7 +11,8 @@ import 'package:jaiva/models/song.dart';
 import 'package:jaiva/models/playlist.dart';
 import 'package:jaiva/core/background_audio_handler.dart';
 import 'package:jaiva/core/music_repository.dart';
-import 'package:jaiva/core/player_provider.dart'; 
+import 'package:jaiva/core/player_provider.dart';
+import 'package:jaiva/theme/kinetic_vault_theme.dart'; 
 
 BackgroundAudioHandler? _audioHandler;
 
@@ -26,6 +28,7 @@ Future<void> main() async {
   await Hive.openBox<Playlist>('playlists');
   await Hive.openBox<Song>('downloads');
   await Hive.openBox<Song>('vault');
+  await Hive.openBox('settings');
 
   // 2. 🚨 INITIALIZE SUPABASE
   await Supabase.initialize(
@@ -68,10 +71,8 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Jaiva',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF121212),
-      ),
-      // 🚨 NEW ROUTING LOGIC: We let the AuthGate decide what screen to show!
+      theme: kineticVaultThemeData,
+      //  NEW ROUTING LOGIC: We let the AuthGate decide what screen to show!
       home: const AuthGate(), 
     );
   }
