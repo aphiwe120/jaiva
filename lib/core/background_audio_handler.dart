@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:io'; 
 import 'dart:convert';
-import 'package:flutter/foundation.dart'; // Needed for ValueNotifier
+import 'dart:math'; 
+import 'package:flutter/foundation.dart'; 
 import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:audio_session/audio_session.dart';
@@ -12,6 +13,7 @@ import 'package:jaiva/models/song.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_tts/flutter_tts.dart'; 
 
 class ByteAudioSource extends StreamAudioSource {
   final List<int> bytes;
@@ -48,13 +50,16 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
   final Set<String> _processedCache = {}; 
   final Map<String, String> _genres = {}; 
   
+  // 🎙️ The Voice of the Ghost DJ
+  final FlutterTts _tts = FlutterTts();
+
   int _currentIndex = -1;
   bool _isDownloading = false;
   bool _isSearching = false; 
   bool isSmartShuffleEnabled = true;
   DateTime _lastAutoSkip = DateTime.fromMillisecondsSinceEpoch(0); 
 
-  // 👇 The "Brain" of the Ghost DJ UI
+  // 🧠 The "Brain" of the Ghost DJ UI
   final ValueNotifier<bool> discoveryModeNotifier = ValueNotifier<bool>(false);
 
   final ConcatenatingAudioSource _playlist = ConcatenatingAudioSource(
@@ -67,7 +72,7 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
     _init();
   }
 
-  // 👇 The action that flips the switch from the UI
+  // 🎛️ The action that flips the switch from the UI
   void toggleDiscoveryMode() {
     discoveryModeNotifier.value = !discoveryModeNotifier.value;
     print('🔮 [Ghost DJ] Global Discovery is now: ${discoveryModeNotifier.value ? "ON" : "OFF"}');
@@ -150,14 +155,21 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
       final dir = await getApplicationDocumentsDirectory();
       final localFile = File('${dir.path}/${item.id}.mp4');
 
+      // --- PATH 1: PLAYING CACHED FILE ---
       if (await localFile.exists() && await localFile.length() > 50000) {
         print('🎧 [AudioHandler] Playing cached file.');
         final audioSource = AudioSource.uri(Uri.file(localFile.path), tag: item);
         await _playlist.clear();
         await _playlist.add(audioSource);
+        
         _player.play();
         
+        // 🎙️ Ghost DJ speaks over local files
         if (isSmartShuffleEnabled) {
+          bool isGlobal = item.extras?['isGlobal'] as bool? ?? false;
+          bool isWildcard = item.extras?['isWildcard'] as bool? ?? false;
+          _speakDjIntro(item.title, item.artist ?? 'Unknown Artist', isGlobal: isGlobal, isWildcard: isWildcard);
+          
           _queueNextGhostTrack(item.title).then((_) {
             _precacheNextSong(); 
           });
@@ -167,6 +179,7 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
         return;
       }
 
+      // --- PATH 2: STREAMING FROM YOUTUBE ---
       print('🔄 [AudioHandler] Streaming...');
       final manifest = await _youtubeExplode.videos.streamsClient.getManifest(item.id, ytClients: [YoutubeApiClient.safari, YoutubeApiClient.androidVr]);
       final audioStreamInfo = manifest.audioOnly.withHighestBitrate();
@@ -183,7 +196,6 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
       
       if (videoData.keywords.isNotEmpty) {
         songGenre = videoData.keywords.first;
-        
         final List<String> knownGenres = [
           'amapiano', 'maskandi', 'gqom', 'kwaito', 'afrobeat', 'afrobeats', 
           'rnb', 'hip hop', 'hip-hop', 'house', 'deep house', 'sgija', 
@@ -215,9 +227,15 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
 
       await _playlist.clear();
       await _playlist.add(ByteAudioSource(audioBytes, contentType: audioStreamInfo.container.name == 'webm' ? 'audio/webm' : 'audio/mp4', tag: item));
+      
       _player.play();
       
+      // 🎙️ Ghost DJ speaks over streaming files
       if (isSmartShuffleEnabled) {
+        bool isGlobal = item.extras?['isGlobal'] as bool? ?? false;
+        bool isWildcard = item.extras?['isWildcard'] as bool? ?? false;
+        _speakDjIntro(item.title, item.artist ?? 'Unknown Artist', isGlobal: isGlobal, isWildcard: isWildcard);
+
         _queueNextGhostTrack(item.title).then((_) {
           _precacheNextSong(); 
         });
@@ -234,20 +252,117 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
 
   // 5. GHOST DJ & SMART SHUFFLE
 
+  // 🎙️ THE GHOST DJ VOICE ENGINE
+ // 🎙️ THE GHOST DJ VOICE ENGINE
+  Future<void> _speakDjIntro(String songTitle, String artist, {bool isGlobal = false, bool isWildcard = false}) async {
+    try {
+      final settingsBox = Hive.box('settings');
+      final userName = settingsBox.get('username', defaultValue: 'Listener');
+
+      final script = _generateDynamicScript(songTitle, artist, userName, isGlobal, isWildcard);
+
+      await _tts.setLanguage("en-ZA"); 
+      await _tts.setSpeechRate(0.45); 
+      await _tts.setPitch(0.85); 
+
+      // 🚨 THE FIX: Force the TTS engine to wait until the DJ finishes their sentence!
+      await _tts.awaitSpeakCompletion(true); 
+
+      // 🦆 THE DUCK: Drop the beat to 15% so the voice cuts through clearly
+      await _player.setVolume(0.15);
+      
+      print('🎙️ [Ghost DJ Speaks]: "$script"');
+      
+      // Because we added awaitSpeakCompletion, the code will now pause exactly here until the DJ stops talking.
+      await _tts.speak(script);
+
+      // 🔊 THE SWELL: Bring the beat back to 100% the exact millisecond the DJ drops the mic
+      await _player.setVolume(1.0);
+
+    } catch (e) {
+      print("🎙️ Ghost DJ TTS Error: $e");
+      _player.setVolume(1.0); 
+    }
+  }
+  // 🧩 THE FRAGMENT ENGINE
+  String _generateDynamicScript(String songTitle, String artist, String userName, bool isGlobal, bool isWildcard) {
+    final random = Random();
+
+    final greetings = [
+      "Yo $userName.", 
+      "What's good $userName.", 
+      "Ghost DJ online.", 
+      "Vibe check, $userName.",
+      "Transmission incoming for $userName."
+    ];
+
+    final wildcardTransitions = [
+      "Going completely off the grid for this one.",
+      "Nobody has this in their vault yet. Let's make history.",
+      "Deep diving into the unknown algorithm.",
+      "Pioneering a brand new wave right now.",
+      "This one is completely untouched by the global vault."
+    ];
+
+    final globalTransitions = [
+      "I found this out in the wild.",
+      "Strangers are vibing to this right now.",
+      "Intercepted this from the global feed.",
+      "This one is making waves worldwide.",
+      "Stepping outside your vault for a second."
+    ];
+
+    final localTransitions = [
+      "I pulled this straight from your vault.",
+      "Dusting off this classic for you.",
+      "Switching up the energy.",
+      "Let's get into your personal stash.",
+      "You know I had to queue this one up."
+    ];
+
+    final songIntros = [
+      "Here is $songTitle by $artist.",
+      "Up next is $songTitle by $artist.",
+      "Dropping $songTitle from $artist.",
+      "Track loaded: $songTitle by $artist."
+    ];
+
+    final outros = [
+      "Let's ride.",
+      "Turn it up.",
+      "Catch this wave.",
+      "Vibe with me."
+    ];
+
+    String greeting = greetings[random.nextInt(greetings.length)];
+    
+    String transition;
+    if (isWildcard) {
+      transition = wildcardTransitions[random.nextInt(wildcardTransitions.length)];
+    } else if (isGlobal) {
+      transition = globalTransitions[random.nextInt(globalTransitions.length)];
+    } else {
+      transition = localTransitions[random.nextInt(localTransitions.length)];
+    }
+    
+    String intro = songIntros[random.nextInt(songIntros.length)];
+    bool useOutro = random.nextBool();
+    String outro = useOutro ? outros[random.nextInt(outros.length)] : "";
+
+    return "$greeting $transition $intro $outro".trim();
+  }
+
   Future<String> _extractGenreFromVideo(String videoId) async {
     try {
       var videoData = await _youtubeExplode.videos.get(videoId);
       String genre = "Unknown";
-      
       if (videoData.keywords.isNotEmpty) {
         genre = videoData.keywords.first;
-        
         final List<String> knownGenres = [
           'amapiano', 'maskandi', 'gqom', 'kwaito', 'afrobeat', 'afrobeats', 
           'rnb', 'hip hop', 'hip-hop', 'house', 'deep house', 'sgija', 
           'pop', 'soul', 'jazz', 'gospel'
         ];
-
         for (var tag in videoData.keywords) {
           if (knownGenres.contains(tag.toLowerCase())) {
             genre = tag[0].toUpperCase() + tag.substring(1).toLowerCase();
@@ -257,70 +372,112 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
       }
       return genre;
     } catch (e) {
-      print('⚠️ [Genre Extractor] Error: $e');
       return 'Unknown';
     }
   }
 
+  // 🃏 THE QUEUE SYSTEM WITH WILDCARD LOGIC
   Future<void> _queueNextGhostTrack(String currentTitle) async {
     if (_isSearching) return;
     _isSearching = true;
 
     try {
-      String? nextTitle = await getGhostRecommendation(currentTitle);
+      final bool isDiscoveryMode = discoveryModeNotifier.value;
+      final bool isWildcard = isDiscoveryMode && Random().nextInt(100) < 25; // 25% chance to go rogue!
       
-      if (nextTitle == null) {
-        print('⏳ [Ghost DJ] Vault empty. Waiting 25s for DNA extraction...');
-        await Future.delayed(const Duration(seconds: 40)); 
-        nextTitle = await getGhostRecommendation(currentTitle);
-      }
+      Video? bestMatch;
+      String nextTitle = "Unknown";
 
-      if (nextTitle != null) {
-        final searchResults = await _youtubeExplode.search.search(nextTitle);
+      // 🃏 PATH 1: WILDCARD
+      if (isWildcard) {
+        print('🃏 [Ghost DJ] WILDCARD ACTIVATED! Deep diving into YouTube...');
+        final currentVideoId = _dynamicQueue.isNotEmpty ? _dynamicQueue.last.id : null;
         
-        if (searchResults.isNotEmpty) {
-          Video? bestMatch;
+        if (currentVideoId != null) {
+          final currentVideo = await _youtubeExplode.videos.get(currentVideoId);
+          final relatedVideos = await _youtubeExplode.videos.getRelatedVideos(currentVideo);
+          
+          if (relatedVideos != null && relatedVideos.isNotEmpty) {
+            for (var video in relatedVideos.take(15)) {
+              final titleLower = video.title.toLowerCase();
+              final duration = video.duration ?? Duration.zero;
 
-          for (var video in searchResults.take(10)) {
-            final titleLower = video.title.toLowerCase();
-            final duration = video.duration ?? Duration.zero;
+              if (duration.inSeconds < 90 || duration.inMinutes > 10) continue;
+              if (titleLower.contains('music video') || titleLower.contains('visualizer') || 
+                  titleLower.contains('live') || titleLower.contains('mix') ||
+                  titleLower.contains('mashup') || titleLower.contains('full album') ||
+                  _dynamicQueue.any((q) => q.id == video.id.value)) { 
+                continue; 
+              }
 
-            if (duration.inSeconds < 90 || duration.inMinutes > 10) continue;
-
-            if (titleLower.contains('music video') || 
-                titleLower.contains('visualizer') || 
-                titleLower.contains('live') || 
-                titleLower.contains('mix') ||
-                titleLower.contains('mashup') ||
-                titleLower.contains('full album')) {
-              continue; 
+              bestMatch = await _youtubeExplode.videos.get(video.id); 
+              nextTitle = bestMatch.title;
+              break; 
             }
-
-            bestMatch = video;
-            break; 
           }
+        }
+      } 
+      
+      // 🌐 PATH 2: NORMAL API LOGIC
+      if (bestMatch == null) {
+        String? recommendedTitle = await getGhostRecommendation(currentTitle);
+        
+        if (recommendedTitle == null) {
+          print('⏳ [Ghost DJ] Vault empty. Waiting 25s for DNA extraction...');
+          await Future.delayed(const Duration(seconds: 40)); 
+          recommendedTitle = await getGhostRecommendation(currentTitle);
+        }
 
-          bestMatch ??= searchResults.firstWhere(
-            (v) => (v.duration?.inSeconds ?? 0) >= 90 && (v.duration?.inMinutes ?? 0) <= 10,
-            orElse: () => searchResults.first, 
-          );
+        if (recommendedTitle != null) {
+          nextTitle = recommendedTitle;
+          final searchResults = await _youtubeExplode.search.search(nextTitle);
+          
+          if (searchResults.isNotEmpty) {
+            for (var video in searchResults.take(10)) {
+              final titleLower = video.title.toLowerCase();
+              final duration = video.duration ?? Duration.zero;
 
-          if (!_dynamicQueue.any((q) => q.title == bestMatch!.title)) {
-            final extractedGenre = await _extractGenreFromVideo(bestMatch.id.value);
-            
-            _dynamicQueue.add(MediaItem(
-              id: bestMatch.id.value, 
-              title: bestMatch.title, 
-              artist: bestMatch.author, 
-              duration: bestMatch.duration, 
-              artUri: Uri.parse(bestMatch.thumbnails.highResUrl)
-            ));
-            _genres[bestMatch.id.value] = extractedGenre;
-            queue.add(List.from(_dynamicQueue));
-            print('🎧 [Ghost DJ] SUCCESS: Injected CLEAN audio for: $nextTitle');
+              if (duration.inSeconds < 90 || duration.inMinutes > 10) continue;
+              if (titleLower.contains('music video') || titleLower.contains('visualizer') || 
+                  titleLower.contains('live') || titleLower.contains('mix') ||
+                  titleLower.contains('mashup') || titleLower.contains('full album')) {
+                continue; 
+              }
+
+              bestMatch = video;
+              break; 
+            }
+            bestMatch ??= searchResults.firstWhere(
+              (v) => (v.duration?.inSeconds ?? 0) >= 90 && (v.duration?.inMinutes ?? 0) <= 10,
+              orElse: () => searchResults.first, 
+            );
           }
         }
       }
+
+      // 💉 INJECT THE TRACK
+      if (bestMatch != null && !_dynamicQueue.any((q) => q.id == bestMatch!.id.value)) {
+        final extractedGenre = await _extractGenreFromVideo(bestMatch.id.value);
+        
+        _dynamicQueue.add(MediaItem(
+          id: bestMatch.id.value, 
+          title: bestMatch.title, 
+          artist: bestMatch.author, 
+          duration: bestMatch.duration, 
+          artUri: Uri.parse(bestMatch.thumbnails.highResUrl),
+          // 👇 Attach the invisible metadata tag so the player knows how to introduce it!
+          extras: {'isGlobal': isDiscoveryMode, 'isWildcard': isWildcard} 
+        ));
+        _genres[bestMatch.id.value] = extractedGenre;
+        queue.add(List.from(_dynamicQueue));
+        
+        if (isWildcard) {
+           print('🔥 [Ghost DJ] WILDCARD SUCCESS: Pioneering new track: $nextTitle');
+        } else {
+           print('🎧 [Ghost DJ] SUCCESS: Injected CLEAN audio for: $nextTitle');
+        }
+      }
+      
     } catch (e) {
       print('⚠️ [Ghost DJ] Error: $e');
     } finally {
@@ -393,13 +550,11 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
         
         if (videoData.keywords.isNotEmpty) {
           nextGenre = videoData.keywords.first;
-          
           final List<String> knownGenres = [
             'amapiano', 'maskandi', 'gqom', 'kwaito', 'afrobeat', 'afrobeats', 
             'rnb', 'hip hop', 'hip-hop', 'house', 'deep house', 'sgija', 
             'pop', 'soul', 'jazz', 'gospel'
           ];
-
           for (var tag in videoData.keywords) {
             if (knownGenres.contains(tag.toLowerCase())) {
                nextGenre = tag[0].toUpperCase() + tag.substring(1).toLowerCase();
@@ -461,12 +616,11 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
     }
   }
 
-  // 6.5 GHOST RECOMMENDATION (Now with Global Discovery!)
+  // 6.5 GHOST RECOMMENDATION 
   Future<String?> getGhostRecommendation(String currentTitle) async {
     final userId = Supabase.instance.client.auth.currentUser?.id;
     if (userId == null) return null;
 
-    // 👇 Reads directly from the UI button now!
     final bool isDiscoveryMode = discoveryModeNotifier.value; 
     
     Uri url;
@@ -483,11 +637,9 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
       
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        
         if (data['source'] == 'Global Discovery') {
            print('🔥 [Ghost DJ] FOUND A GLOBAL BANGER: ${data['next_up']}');
         }
-        
         return data['next_up'] as String?;
       } else if (response.statusCode == 404) {
         print('🤖 [Ghost DJ] Vault empty or song not found. Falling back to YouTube related tracks.');
