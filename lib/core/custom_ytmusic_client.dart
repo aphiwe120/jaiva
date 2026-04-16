@@ -20,11 +20,20 @@ class CustomYTMusicClient {
           final List<dynamic> items = jsonResponse['data'];
           
           return items.map((item) {
+            // 🚨 THE FIX: Hunt for ANY valid ID (Song, Album, or Playlist)
+            final String extractedId = item['videoId'] ?? item['playlistId'] ?? item['browseId'] ?? '';
+            
+            // Determine if it's an album based on ID length or a provided 'type' flag
+            final bool isAlbum = extractedId.length > 11 || item['type'] == 'album';
+
             return Song(
-              id: item['videoId'] ?? '',
+              id: extractedId,
               title: item['title'] ?? 'Unknown Title',
-              artist: item['artist'] ?? 'Unknown Artist', 
+              // Some APIs use 'author' instead of 'artist' for albums
+              artist: item['artist'] ?? item['author'] ?? 'Unknown Artist', 
               thumbnailUrl: item['thumbnail'] ?? '',
+              // Tag it so the UI knows what it is!
+              genre: isAlbum ? 'Album' : 'Search',
             );
           }).where((song) => song.id.isNotEmpty).toList(); 
         }

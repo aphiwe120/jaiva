@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:audio_service/audio_service.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:hive/hive.dart';
 import 'package:jaiva/models/song.dart';
 import 'package:jaiva/core/player_provider.dart';
 import 'package:jaiva/ui/widgets/add_to_playlist_sheet.dart';
@@ -94,7 +96,31 @@ class SongOptionsSheet extends ConsumerWidget {
               );
             },
           ),
+          ListTile(
+            leading: const Icon(Icons.do_not_disturb_alt, color: Colors.redAccent),
+            title: Text(
+              "Don't recommend this track",
+              style: GoogleFonts.outfit(color: Colors.white, fontSize: 16),
+            ),
+            onTap: () async {
+              // 1. Add to Hive Blacklist
+              final blacklistBox = Hive.box('blacklist');
+              await blacklistBox.put(song.id, song.title);
 
+              // 2. Close sheet and notify user
+              Navigator.pop(context);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    '🚫 ${song.title} added to Blacklist.', 
+                    style: GoogleFonts.outfit(fontWeight: FontWeight.bold, color: Colors.white)
+                  ),
+                  backgroundColor: Colors.redAccent,
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            },
+          ),
           // --- ACTION: Add to Playlist ---
           ListTile(
             leading: const Icon(Icons.playlist_add, color: Colors.white),

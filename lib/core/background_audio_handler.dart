@@ -151,6 +151,7 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   Future<void> _handlePlayback(MediaItem item) async {
+    _isSearching = false; // 🚨 Reset the gate so the DJ is ready for the new song!
     try {
       final dir = await getApplicationDocumentsDirectory();
       final localFile = File('${dir.path}/${item.id}.mp4');
@@ -362,10 +363,17 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   Future<void> _queueNextGhostTrack(String currentTitle) async {
+    // Only skip if we are actually in the middle of a network call
     if (_isSearching) return;
     _isSearching = true;
 
     try {
+      // 🚨 Ensure we always have at least 3 songs in the chamber
+      if (_dynamicQueue.length > _currentIndex + 3) {
+        _isSearching = false; 
+        return; 
+      }
+
       final bool isDiscoveryMode = discoveryModeNotifier.value;
       final bool isWildcard = isDiscoveryMode && Random().nextInt(100) < 25; 
       
@@ -450,6 +458,12 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
         ));
         _genres[bestMatch.id.value] = extractedGenre;
         queue.add(List.from(_dynamicQueue));
+        
+        // 🔄 RECURSION: If we still have less than 3 songs, the DJ keeps working!
+        if (_dynamicQueue.length < _currentIndex + 3) {
+          _isSearching = false;
+          _queueNextGhostTrack(bestMatch.title); 
+        }
       }
       
     } catch (e) {
@@ -624,7 +638,7 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
     queue.add([]);
     _currentIndex = -1;
   }
-Future<void> playPlaylist(List<MediaItem> mediaItems, {int startIndex = 0}) async {
+  Future<void> playPlaylist(List<MediaItem> mediaItems, {int startIndex = 0}) async {
     if (mediaItems.isEmpty) return;
 
     _dynamicQueue.clear();
@@ -640,6 +654,44 @@ Future<void> playPlaylist(List<MediaItem> mediaItems, {int startIndex = 0}) asyn
     // Start the download/playback cycle for the selected song
     _handlePlayback(targetItem);
   }
+
+  Future<void> loadAndPlayAlbum(String albumId) async {
+    try {
+      print('📀 [Vault] Opening Album: $albumId');
+      
+      // 1. Get Album Info
+      var playlist = await _youtubeExplode.playlists.get(albumId);
+      
+      // 2. Get all individual songs inside the album
+      List<MediaItem> albumTracks = [];
+      
+      // This streams the videos one by one
+      await for (var video in _youtubeExplode.playlists.getVideos(playlist.id)) {
+        albumTracks.add(
+          MediaItem(
+            id: video.id.value,
+            title: video.title,
+            artist: video.author,
+            duration: video.duration,
+            artUri: Uri.parse(video.thumbnails.highResUrl),
+            // Tag it as an album track for the UI
+            extras: {'albumTitle': playlist.title}, 
+          ),
+        );
+      }
+
+      print('✅ [Vault] Loaded ${albumTracks.length} songs from "${playlist.title}"');
+
+      // 3. Send the whole batch to your existing playlist logic
+      if (albumTracks.isNotEmpty) {
+        playPlaylist(albumTracks);
+      }
+
+    } catch (e) {
+      print('❌ [Vault] Failed to load album: $e');
+    }
+  }
+
   // 8. HELPERS & LIFECYCLE
   AndroidEqualizer get equalizer => _equalizer;
   @override Future<void> play() => _player.play();

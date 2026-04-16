@@ -29,6 +29,7 @@ Future<void> main() async {
   await Hive.openBox<Song>('downloads');
   await Hive.openBox<Song>('vault');
   await Hive.openBox('settings');
+  await Hive.openBox('blacklist');
 
   // 2. 🚨 INITIALIZE SUPABASE
   await Supabase.initialize(

@@ -9,6 +9,7 @@ import 'package:jaiva/core/search_provider.dart';
 import 'package:jaiva/core/player_provider.dart';
 import 'package:jaiva/ui/widgets/add_to_playlist_sheet.dart';
 import 'package:jaiva/models/song.dart';
+import 'package:jaiva/ui/screens/album_detail_screen.dart';
 import 'package:jaiva/ui/widgets/mini_player.dart';
 import 'package:jaiva/ui/widgets/jaiva_bottom_nav.dart';
 import 'package:jaiva/ui/widgets/song_options_sheet.dart';
@@ -96,7 +97,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                           if (_debounce?.isActive ?? false) _debounce!.cancel();
                           _debounce = Timer(const Duration(milliseconds: 500), () {
                             if (query.trim().isNotEmpty) {
-                              // 👇 FIX 1: Let Riverpod handle the rebuild, no setState() needed!
                               ref.read(searchProvider.notifier).search(query.trim());
                             }
                           });
@@ -120,7 +120,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                             ),
                           )
                         : searchQuery.when(
-                            // 👇 FIX: Swapped MasonryGridView for standard GridView.builder
                             data: (songs) => GridView.builder(
                               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                                 crossAxisCount: 2,
@@ -132,6 +131,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                               itemCount: songs.length,
                               itemBuilder: (context, index) {
                                 final song = songs[index];
+                                
+                                // 🧠 SMART ALBUM DETECTION: YouTube Video IDs are exactly 11 chars. 
+                                // Album/Playlist IDs (like OLAK5uy...) are much longer.
+                                final bool isAlbum = song.id.length > 11;
+
                                 return KineticSongTile(
                                   key: ValueKey(song.id), 
                                   song: Song(
@@ -139,18 +143,40 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                                     title: song.title,
                                     artist: song.artist,
                                     thumbnailUrl: song.thumbnailUrl,
-                                    genre: 'Search',
+                                    // 👇 Visual indicator injected into the UI!
+                                    genre: isAlbum ? '📀 FULL ALBUM' : '🎵 TRACK',
                                   ),
                                   bpm: 120.0,
-                                  genre: 'Search',
+                                  genre: isAlbum ? '📀 ALBUM' : 'Search',
                                   onTap: () {
                                     _focusNode.unfocus();
-                                    ref.read(audioHandlerProvider).playMediaItem(MediaItem(
-                                      id: song.id,
-                                      title: song.title,
-                                      artist: song.artist,
-                                      artUri: Uri.parse(song.thumbnailUrl),
-                                    ));
+                                    
+                                    if (isAlbum) {
+                                      // 🚀 NEW: Navigate to the beautiful Album Detail Screen
+                                      final albumData = Song(
+                                        id: song.id,
+                                        title: song.title,
+                                        artist: song.artist,
+                                        thumbnailUrl: song.thumbnailUrl,
+                                        genre: 'Album',
+                                      );
+                                      
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) => AlbumDetailScreen(album: albumData),
+                                        ),
+                                      );
+                                      
+                                    } else {
+                                      // 1. Send normal track to normal player logic
+                                      ref.read(audioHandlerProvider).playMediaItem(MediaItem(
+                                        id: song.id,
+                                        title: song.title,
+                                        artist: song.artist,
+                                        artUri: Uri.parse(song.thumbnailUrl),
+                                      ));
+                                    }
                                   },
                                   onLongPress: () {
                                     final songToAdd = Song(
@@ -158,7 +184,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                                       title: song.title,
                                       artist: song.artist,
                                       thumbnailUrl: song.thumbnailUrl,
-                                      genre: 'Search',
+                                      genre: isAlbum ? 'Album' : 'Search',
                                     );
                                     SongOptionsSheet.show(context, songToAdd);
                                   },
