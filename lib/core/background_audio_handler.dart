@@ -367,6 +367,8 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
     if (_isSearching) return;
     _isSearching = true;
 
+    final blacklistBox = Hive.box('blacklist'); // 👈 THE BOUNCER BOX
+
     try {
       // 🚨 Ensure we always have at least 3 songs in the chamber
       if (_dynamicQueue.length > _currentIndex + 3) {
@@ -390,6 +392,10 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
           
           if (relatedVideos != null && relatedVideos.isNotEmpty) {
             for (var video in relatedVideos.take(15)) {
+              
+              // 🚫 BOUNCER CHECK
+              if (blacklistBox.containsKey(video.id.value)) continue;
+
               final titleLower = video.title.toLowerCase();
               final duration = video.duration ?? Duration.zero;
 
@@ -424,6 +430,10 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
           
           if (searchResults.isNotEmpty) {
             for (var video in searchResults.take(10)) {
+              
+              // 🚫 BOUNCER CHECK
+              if (blacklistBox.containsKey(video.id.value)) continue;
+
               final titleLower = video.title.toLowerCase();
               final duration = video.duration ?? Duration.zero;
 
@@ -437,10 +447,19 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
               bestMatch = video;
               break; 
             }
-            bestMatch ??= searchResults.firstWhere(
-              (v) => (v.duration?.inSeconds ?? 0) >= 90 && (v.duration?.inMinutes ?? 0) <= 10,
-              orElse: () => searchResults.first, 
-            );
+            
+            // Backup fallback (also applying blacklist to fallback search)
+            if (bestMatch == null) {
+              try {
+                bestMatch = searchResults.firstWhere(
+                  (v) => (v.duration?.inSeconds ?? 0) >= 90 && 
+                         (v.duration?.inMinutes ?? 0) <= 10 &&
+                         !blacklistBox.containsKey(v.id.value)
+                );
+              } catch (e) {
+                 // Ignore if no fallback matches criteria
+              }
+            }
           }
         }
       }
@@ -477,6 +496,8 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
     if (isSmartShuffleEnabled && _dynamicQueue.length <= _currentIndex + 2) {
       if (_isSearching) return;
       _isSearching = true;
+
+      final blacklistBox = Hive.box('blacklist'); // 👈 THE BOUNCER BOX
       
       try {
         final seedTrack = _dynamicQueue.isNotEmpty ? _dynamicQueue.last : null;
@@ -487,6 +508,10 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
         
         if (related != null && related.isNotEmpty) {
           for (var vid in related.take(10)) {
+            
+            // 🚫 BOUNCER CHECK
+            if (blacklistBox.containsKey(vid.id.value)) continue;
+
             if (!_dynamicQueue.any((q) => q.id == vid.id.value)) {
               final relatedGenre = await _extractGenreFromVideo(vid.id.value);
               
@@ -638,6 +663,7 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
     queue.add([]);
     _currentIndex = -1;
   }
+  
   Future<void> playPlaylist(List<MediaItem> mediaItems, {int startIndex = 0}) async {
     if (mediaItems.isEmpty) return;
 
