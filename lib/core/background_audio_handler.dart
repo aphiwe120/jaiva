@@ -13,7 +13,7 @@ import 'package:jaiva/models/song.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:flutter_tts/flutter_tts.dart'; 
+import 'package:jaiva/models/playlist.dart' as local_playlist;
 
 class ByteAudioSource extends StreamAudioSource {
   final List<int> bytes;
@@ -50,8 +50,6 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
   final Set<String> _processedCache = {}; 
   final Map<String, String> _genres = {}; 
   
-  // 🎙️ The Voice of the Ghost DJ
-  final FlutterTts _tts = FlutterTts();
 
   int _currentIndex = -1;
   bool _isDownloading = false;
@@ -89,6 +87,28 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
       }
       
       await _player.setAudioSource(_playlist);
+
+      // 🚨 THE INFINITE DJ LISTENER 🚨
+      // This constantly watches the player. If the song finishes AND we're at the last song, it wakes the AI up!
+      _player.playerStateStream.listen((state) async {
+        // Check if the current song just finished playing
+        if (state.processingState == ProcessingState.completed) {
+          
+          // Check if we are currently at the very last song in the queue
+          final currentIdx = _player.currentIndex ?? -1;
+          final queueLength = queue.value.length;
+          
+          if (currentIdx >= queueLength - 1) {
+            print('🤖 [AI DJ] We reached the end! Fetching the next vibe from the chamber...');
+            
+            // Fetch the next track to maintain the infinite queue
+            if (_dynamicQueue.isNotEmpty) {
+              final lastTrack = _dynamicQueue.last;
+              await _queueNextGhostTrack(lastTrack.title);
+            }
+          }
+        }
+      });
 
       _player.playbackEventStream.listen((PlaybackEvent event) async {
         final playing = _player.playing;
@@ -177,7 +197,15 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
 
       await localFile.writeAsBytes(audioBytes);
       print('✅ [Vault] Download complete. Auto-starting playback...');
-
+      final songBox = Hive.box<Song>('songs');
+      await songBox.put(item.id, Song(
+        id: item.id,
+        title: item.title,
+        artist: item.artist ?? 'Unknown Artist',
+        thumbnailUrl: item.artUri?.toString() ?? '',
+        genre: _genres[item.id] ?? 'Unknown',
+        localPath: localFile.path,  // ✅
+      ));
       // 🚀 THE MAGIC: Start playing the moment the file is ready!
       _startFilePlayback(localFile, item);
 
@@ -199,10 +227,6 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
     _player.play();
 
     if (isSmartShuffleEnabled) {
-      bool isGlobal = item.extras?['isGlobal'] as bool? ?? false;
-      bool isWildcard = item.extras?['isWildcard'] as bool? ?? false;
-      _speakDjIntro(item.title, item.artist ?? 'Unknown Artist', isGlobal: isGlobal, isWildcard: isWildcard);
-      
       _queueNextGhostTrack(item.title).then((_) => _precacheNextSong());
     }
   }
@@ -241,103 +265,11 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
       artist: item.artist ?? 'Unknown Artist',
       thumbnailUrl: item.artUri?.toString() ?? '',
       genre: songGenre,
+      localPath: file.path,  // ✅
     ));
   }
 
   // 5. GHOST DJ & SMART SHUFFLE
-
-  Future<void> _speakDjIntro(String songTitle, String artist, {bool isGlobal = false, bool isWildcard = false}) async {
-    try {
-      final settingsBox = Hive.box('settings');
-      final userName = settingsBox.get('username', defaultValue: 'Listener');
-
-      final script = _generateDynamicScript(songTitle, artist, userName, isGlobal, isWildcard);
-
-      await _tts.setLanguage("en-ZA"); 
-      await _tts.setSpeechRate(0.45); 
-      await _tts.setPitch(0.85); 
-
-      await _tts.awaitSpeakCompletion(true); 
-
-      await _player.setVolume(0.15);
-      print('🎙️ [Ghost DJ Speaks]: "$script"');
-      await _tts.speak(script);
-
-      await _player.setVolume(1.0);
-
-    } catch (e) {
-      print("🎙️ Ghost DJ TTS Error: $e");
-      _player.setVolume(1.0); 
-    }
-  }
-
-  String _generateDynamicScript(String songTitle, String artist, String userName, bool isGlobal, bool isWildcard) {
-    final random = Random();
-
-    final greetings = [
-      "yiyo yiyo $userName.", 
-      "What's good $userName.", 
-      "Ghost DJ online.", 
-      "Vibe check, $userName.",
-      "Transmission incoming for $userName."
-    ];
-
-    final wildcardTransitions = [
-      "Going completely off the grid for this one.",
-      "Nobody has this in their vault yet. Let's make history.",
-      "Deep diving into the unknown algorithm.",
-      "Pioneering a brand new wave right now.",
-      "This one is completely untouched by the global vault."
-    ];
-
-    final globalTransitions = [
-      "I found this out in the wild.",
-      "Strangers are vibing to this right now.",
-      "Intercepted this from the global feed.",
-      "This one is making waves worldwide.",
-      "Stepping outside your vault for a second."
-    ];
-
-    final localTransitions = [
-      "I pulled this straight from your vault.",
-      "Dusting off this classic for you.",
-      "Switching up the energy.",
-      "Let's get into your personal stash.",
-      "You know I had to queue this one up."
-    ];
-
-    final songIntros = [
-      "Here is $songTitle by $artist.",
-      "Up next is $songTitle by $artist.",
-      "Dropping $songTitle from $artist.",
-      "Track loaded: $songTitle by $artist."
-    ];
-
-    final outros = [
-      "Let's ride.",
-      "Turn it up.",
-      "Catch this wave.",
-      "Vibe with me."
-    ];
-
-    String greeting = greetings[random.nextInt(greetings.length)];
-    
-    String transition;
-    if (isWildcard) {
-      transition = wildcardTransitions[random.nextInt(wildcardTransitions.length)];
-    } else if (isGlobal) {
-      transition = globalTransitions[random.nextInt(globalTransitions.length)];
-    } else {
-      transition = localTransitions[random.nextInt(localTransitions.length)];
-    }
-    
-    String intro = songIntros[random.nextInt(songIntros.length)];
-    bool useOutro = random.nextBool();
-    String outro = useOutro ? outros[random.nextInt(outros.length)] : "";
-
-    return "$greeting $transition $intro $outro".trim();
-  }
-
   Future<String> _extractGenreFromVideo(String videoId) async {
     try {
       var videoData = await _youtubeExplode.videos.get(videoId);
@@ -591,11 +523,15 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
     final userId = Supabase.instance.client.auth.currentUser?.id;
     if (userId == null) return null;
 
-    final bool isDiscoveryMode = discoveryModeNotifier.value; 
-    Uri url = isDiscoveryMode 
-      ? Uri.parse('https://jaiva-api.onrender.com/api/discover?current_song=${Uri.encodeComponent(currentTitle)}&user_id=$userId')
-      : Uri.parse('https://jaiva-api.onrender.com/api/recommend?current_song=${Uri.encodeComponent(currentTitle)}&user_id=$userId');
+   final bool isDiscoveryMode = discoveryModeNotifier.value; 
+    
+    // 🚨 IMPORTANT: Replace 'yourusername' with your actual Hugging Face username!
+    // You can find the exact URL by clicking "Embed this Space" in Hugging Face.
+    final String baseUrl = 'https://aphiwe-mntambo-jaiva-ai-engine.hf.space';
 
+    Uri url = isDiscoveryMode 
+      ? Uri.parse('$baseUrl/api/discover?current_song=${Uri.encodeComponent(currentTitle)}&user_id=$userId')
+      : Uri.parse('$baseUrl/api/recommend?current_song=${Uri.encodeComponent(currentTitle)}&user_id=$userId');
     try {
       final response = await http.get(url).timeout(const Duration(seconds: 15));
       if (response.statusCode == 200) {
@@ -730,14 +666,68 @@ class BackgroundAudioHandler extends BaseAudioHandler with SeekHandler {
     _player.dispose();
   }
 
-  Future<void> _cleanCacheIfTooBig() async {
-    try {
-      final dir = await getApplicationDocumentsDirectory();
-      final files = dir.listSync().whereType<File>().where((f) => f.path.endsWith('.mp4')).toList();
-      if (files.length > 100) {
-        files.sort((a, b) => a.lastModifiedSync().compareTo(b.lastModifiedSync()));
-        for (int i = 0; i < 20; i++) { await files[i].delete(); }
+ Future<void> _cleanCacheIfTooBig() async {
+  try {
+    // 1. Open the databases
+    final playlistBox = await Hive.box<local_playlist.Playlist>('playlists');
+    final songBox = await Hive.box<Song>('songs'); 
+
+    // 2. GATHER THE ARMOR (Find all protected Song IDs)
+    Set<String> protectedSongIds = {};
+    for (var playlist in playlistBox.values) {
+      // Since your Playlist model uses List<Song>, we grab all their IDs
+      protectedSongIds.addAll(playlist.songs.map((s) => s.id));
+    }
+
+    // 3. MAP THE SHIELDS TO FILE PATHS
+    // We need to know the physical file paths of those protected songs
+    Set<String> protectedPaths = {};
+    for (var song in songBox.values) {
+      if (protectedSongIds.contains(song.id)) {
+        // 🚨 Note: Replace `song.localPath` with whatever variable you 
+        // use in your Song model to store the file location/name!
+        protectedPaths.add(song.localPath); 
       }
-    } catch (e) { print('Janitor Error: $e'); }
+    }
+
+    // 4. SCAN THE HARD DRIVE
+    final dir = await getApplicationDocumentsDirectory();
+    final allFiles = dir.listSync().whereType<File>().where((f) => f.path.endsWith('.mp4')).toList();
+
+    // 5. SEPARATE THE "LOOSE" FILES
+    // Filter out any file whose path matches a protected path
+    final deletableFiles = allFiles.where((f) => !protectedPaths.contains(f.path)).toList();
+
+    // 6. ENFORCE THE LIMIT (Only on unprotected files!)
+    if (deletableFiles.length > 100) {
+      // Sort oldest to newest
+      deletableFiles.sort((a, b) => a.lastModifiedSync().compareTo(b.lastModifiedSync()));
+      
+      // Calculate exactly how many to delete to get back down to 100
+      int excessCount = deletableFiles.length - 100;
+
+      for (int i = 0; i < excessCount; i++) {
+        final targetFile = deletableFiles[i];
+        
+        // Axe the physical file
+        await targetFile.delete();
+
+        // 🧹 Pro-Janitor Move: Delete the dead record from Hive too!
+        // We search the songBox to find which song we just deleted, and remove it from the DB
+        // so the app doesn't try to play a ghost file.
+        try {
+          final deadSong = songBox.values.firstWhere((s) => s.localPath == targetFile.path);
+          await songBox.delete(deadSong.id);
+        } catch (_) {
+          // Song wasn't in Hive anyway, ignore.
+        }
+      }
+      print('🧹 Vault Janitor: Cleared $excessCount unprotected tracks.');
+    } else {
+      print('🛡️ Vault Janitor: Total loose files under 100. Skipping cleanup.');
+    }
+  } catch (e) { 
+    print('❌ Janitor Error: $e'); 
   }
+}
 }

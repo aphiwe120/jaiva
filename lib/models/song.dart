@@ -19,11 +19,15 @@ class Song {
   @HiveField(4)
   final String genre;
 
+  @HiveField(5)
+  final String localPath;
+
   Song({
     required this.id,
     required this.title,
     required this.artist,
     required this.thumbnailUrl,
     this.genre = 'Unknown',
+    this.localPath = '', // ← Add this parameter
   });
 }
